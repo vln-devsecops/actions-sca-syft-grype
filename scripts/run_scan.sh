@@ -48,9 +48,18 @@ echo "Using grype image: ${GRYPE_IMAGE}"
 # directory (where syft/grype would otherwise cache config/state) isn't
 # writable by whichever host uid we run as instead - same reasoning as
 # actions-sast-sonarqube's run_scan.sh SCANNER_CACHE_DIR trick. --user
-# matches the host checkout owner so bind-mounted output is writable; HOME=/tmp
-# sidesteps the unwritable baked-in home dir (each container gets its own
-# /tmp, world-writable by the sticky bit, regardless of --user).
+# matches the host checkout owner so bind-mounted output is writable.
+#
+# HOME=/tmp alone is NOT enough, unlike the SAST scanner image: these images'
+# baked-in /tmp is root-owned and not world-writable, so a non-root --user
+# gets a bare "permission denied" trying to create anything under it -
+# confirmed live (grype fatally fails "unable to create listing temp file"
+# for a DB-metadata temp file it writes straight to $TMPDIR, entirely
+# separate from GRYPE_DB_CACHE_DIR below). Bind-mount a host-created,
+# already-correctly-owned directory over /tmp instead of trusting the
+# image's own one.
+TOOL_TMP_DIR="$(mktemp -d)"
+
 if [[ -n "${GRYPE_DB_CACHE_DIR:-}" ]]; then
   CLEANUP_GRYPE_DB_CACHE_DIR=false
 else
@@ -58,9 +67,17 @@ else
   CLEANUP_GRYPE_DB_CACHE_DIR=true
 fi
 mkdir -p "$GRYPE_DB_CACHE_DIR"
-if [[ "$CLEANUP_GRYPE_DB_CACHE_DIR" == "true" ]]; then
-  trap 'rm -rf "${GRYPE_DB_CACHE_DIR}"' EXIT
-fi
+
+# One trap covers both scratch dirs - TOOL_TMP_DIR always, GRYPE_DB_CACHE_DIR
+# only when this script created it itself (a caller-supplied cache dir, e.g.
+# action.yml's actions/cache-managed path, is the caller's to clean up).
+cleanup() {
+  rm -rf "${TOOL_TMP_DIR}"
+  if [[ "$CLEANUP_GRYPE_DB_CACHE_DIR" == "true" ]]; then
+    rm -rf "${GRYPE_DB_CACHE_DIR}"
+  fi
+}
+trap cleanup EXIT
 
 echo "Generating SBOM for ${ABS_PROJECT_BASE_DIR} (project '${PROJECT_KEY}')..."
 timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
@@ -68,6 +85,7 @@ timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   -e HOME=/tmp \
   -v "${ABS_PROJECT_BASE_DIR}:/src:ro" \
   -v "${ABS_OUT_DIR}:/out" \
+  -v "${TOOL_TMP_DIR}:/tmp" \
   "${SYFT_IMAGE}" \
   dir:/src -o syft-json=/out/sbom.json
 
@@ -83,6 +101,7 @@ timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   -e GRYPE_DB_CACHE_DIR=/grype-db-cache \
   -v "${ABS_OUT_DIR}:/out" \
   -v "${GRYPE_DB_CACHE_DIR}:/grype-db-cache" \
+  -v "${TOOL_TMP_DIR}:/tmp" \
   "${GRYPE_IMAGE}" \
   sbom:/out/sbom.json -o json > "${ABS_OUT_DIR}/grype-raw.json"
   # No --fail-on here deliberately: grype exiting non-zero on a severity
