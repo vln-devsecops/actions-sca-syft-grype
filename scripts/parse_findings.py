@@ -65,6 +65,22 @@ def _coerce_fix_state(fix_state):
     return fix_state if fix_state in VALID_FIX_STATES else "unknown"
 
 
+def _normalize_location_path(path):
+    """Syft's `dir:` cataloger reports locations rooted at "/" (e.g.
+    "/js/package-lock.json" for a file at js/package-lock.json under the
+    scanned directory) - strip the leading slash so findings' `path` lands
+    in the same path-space as `git diff --name-only` output (repo-root-
+    relative, no leading slash), which sca-pr.yml's --changed-files filter
+    and sca-mainline.yml's artifact-path matching both depend on. Confirmed
+    live: an unstripped leading slash silently dropped every finding from a
+    PR's new-findings set, since "/js/package-lock.json" was never a member
+    of a changed-files set containing "js/package-lock.json" - the exact
+    path-space mismatch diff_findings.py's own tests guard against, just
+    reached from a different angle (syft's convention, not project-base-dir
+    handling)."""
+    return path.lstrip("/") if path else path
+
+
 def _first_related_cve(vuln_id, related_vulnerabilities):
     """Grype's own `vulnerability.id` is sometimes a GHSA advisory ID rather
     than a CVE - surface the CVE alias (from `relatedVulnerabilities`) when
@@ -105,7 +121,7 @@ def normalize_match(match):
             "version": artifact.get("version"),
             "type": artifact.get("type"),
             "purl": artifact.get("purl"),
-            "path": location.get("path") or artifact.get("name") or "",
+            "path": _normalize_location_path(location.get("path")) or artifact.get("name") or "",
             "fixState": _coerce_fix_state(fix.get("state")),
             "fixedIn": fix.get("versions") or [],
             "dataSource": vulnerability.get("dataSource"),

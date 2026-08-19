@@ -5,6 +5,7 @@ from parse_findings import (
     _coerce_fix_state,
     _coerce_severity,
     _first_related_cve,
+    _normalize_location_path,
     finding_key,
     main,
     normalize,
@@ -27,7 +28,9 @@ def make_match(
     description="Prototype pollution",
 ):
     if locations is None:
-        locations = [{"path": "package-lock.json"}]
+        # Realistic syft `dir:` output is rooted at "/" - see
+        # _normalize_location_path and its dedicated tests below.
+        locations = [{"path": "/package-lock.json"}]
     if fix_versions is None:
         fix_versions = ["4.17.12"]
     return {
@@ -69,7 +72,7 @@ def test_normalize_match_shapes_a_single_location_finding():
 
 
 def test_normalize_match_emits_one_finding_per_location():
-    match = make_match(locations=[{"path": "package-lock.json"}, {"path": "sub/package-lock.json"}])
+    match = make_match(locations=[{"path": "/package-lock.json"}, {"path": "/sub/package-lock.json"}])
     findings = normalize_match(match)
     assert [f["path"] for f in findings] == ["package-lock.json", "sub/package-lock.json"]
 
@@ -85,6 +88,31 @@ def test_normalize_match_missing_location_path_falls_back_to_package_name():
     match = make_match(locations=[{}])
     findings = normalize_match(match)
     assert findings[0]["path"] == "lodash"
+
+
+def test_normalize_location_path_strips_syfts_leading_slash():
+    """Regression test: syft's `dir:` cataloger roots locations at "/" (e.g.
+    "/js/package-lock.json"), which - left unstripped - silently dropped
+    every finding from a real PR's new-findings set, since sca-pr.yml's
+    --changed-files entries (from `git diff --name-only`) never carry a
+    leading slash. Confirmed live against actions-sca-syft-grype PR #1."""
+    assert _normalize_location_path("/js/package-lock.json") == "js/package-lock.json"
+
+
+def test_normalize_location_path_strips_multiple_leading_slashes():
+    assert _normalize_location_path("//weird/double-slash.json") == "weird/double-slash.json"
+
+
+def test_normalize_location_path_leaves_already_clean_path_unchanged():
+    assert _normalize_location_path("js/package-lock.json") == "js/package-lock.json"
+
+
+def test_normalize_location_path_passes_through_none():
+    assert _normalize_location_path(None) is None
+
+
+def test_normalize_location_path_passes_through_empty_string():
+    assert _normalize_location_path("") == ""
 
 
 def test_coerce_severity_returns_valid_value_unchanged():
