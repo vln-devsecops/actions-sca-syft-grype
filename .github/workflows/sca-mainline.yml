@@ -1,0 +1,233 @@
+name: SCA syft/grype mainline scan
+
+# No SAST equivalent - a SAST finding is purely a function of the code, so
+# it can only change when the code changes (hence baseline-on-push,
+# diff-on-PR is the whole story there). An SCA finding is also a function of
+# Grype's vulnerability database, which moves independently of any commit:
+# a dependency nobody has touched in months can grow a new CVE overnight.
+# This workflow re-scans the current state of a branch on a recurring
+# schedule (the caller wires the actual `schedule:` trigger - this workflow
+# only accepts workflow_call, see runbooks/sca-syft-grype.md in the
+# guidance repo) and alerts when the diff against the last mainline scan is
+# non-empty. Deliberately does NOT reuse sca-pr.yml's --changed-files
+# filter: every DB-drift finding is in scope here, that's the entire point
+# (see diff_findings.py's module docstring).
+#
+# Two independent alert channels, both opt-in beyond the always-on step
+# summary: `blocking` (default true) fails the job itself - GitHub emails
+# failed-scheduled-run notifications to watchers by default, no further
+# wiring needed. `create-issue` (default false) additionally opens/updates a
+# tracking GitHub Issue - off by default because filing issues is a
+# meaningfully more visible action than a job going red, and a consumer
+# repo should choose that deliberately rather than get it for free the
+# moment they adopt this workflow. Other delivery channels (Slack, a
+# generic webhook) are a natural follow-up - not built here; see this
+# repo's issue tracker.
+
+on:
+  workflow_call:
+    inputs:
+      project-key:
+        description: Identifier this scan is filed under - see action.yml.
+        type: string
+        default: ${{ github.event.repository.name }}
+      project-base-dir:
+        description: Path (relative to the repo root) to scan.
+        type: string
+        default: .
+      severity-threshold:
+        description: Minimum severity (Negligible/Low/Medium/High/Critical) a new finding must have to block the job.
+        type: string
+        default: High
+      blocking:
+        description: >-
+          Whether a new finding at or above severity-threshold fails the
+          job - GitHub emails failed-scheduled-run notifications to
+          watchers by default, so this alone is a usable alert channel with
+          no further opt-in.
+        type: boolean
+        default: true
+      check-name:
+        description: Name of the GitHub Check Run this workflow creates against the scanned commit.
+        type: string
+        default: sca-syft-grype/mainline-new-vulnerabilities
+      create-issue:
+        description: >-
+          Whether to additionally open (or comment on) a tracking GitHub
+          Issue when new findings appear. Opt-in and off by default: filing
+          an issue is more visible than a failed job, and a consumer repo
+          should choose it deliberately - see this workflow file's header
+          comment.
+        type: boolean
+        default: false
+      issue-labels:
+        description: Comma-separated labels applied to a newly-opened tracking issue. Only used when create-issue is true.
+        type: string
+        default: "security,sca-alert"
+      artifact-retention-days:
+        description: >-
+          Retention period for the rolling sca-mainline-<branch> artifact.
+          Deliberately short (unlike a baseline artifact's default 90 days):
+          this artifact is superseded by every subsequent scheduled run and
+          isn't resolved by SHA, so an old copy has no lasting value once a
+          newer one exists - it just needs to outlive the gap between two
+          scheduled runs.
+        type: number
+        default: 14
+
+jobs:
+  mainline-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+      issues: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # This reusable workflow is meant to be called by other repos, so it
+      # can't assume its own composite action (action.yml) is checked out at
+      # the workspace root - that root holds the CALLER's code. Fetch this
+      # action's own repo, pinned to the exact ref this workflow file itself
+      # is running from, into a side directory instead.
+      - name: Resolve this action's own source ref
+        id: action-source
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          ref="${WORKFLOW_REF#*@}"
+          repo="${WORKFLOW_REF%%/.github/*}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this action's source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.action-source.outputs.repo }}
+          ref: ${{ steps.action-source.outputs.ref }}
+          path: .sca-syft-grype
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Not SHA-keyed, unlike sca-baseline.yml's artifact - there's no new
+      # commit to key it by, since this scan reruns against the same code on
+      # a schedule. find_baseline_artifact.py's "newest by created_at"
+      # tie-break already does the right thing against a mutable name
+      # without any change (see its docstring).
+      - name: Look up previous mainline scan artifact
+        id: previous
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ARTIFACT_NAME: sca-mainline-${{ github.ref_name }}
+        run: |
+          found="$(python3 .sca-syft-grype/scripts/find_baseline_artifact.py \
+            --repo "$REPO" --name "$ARTIFACT_NAME" --dest .previous-mainline-artifact)"
+          echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan current HEAD
+        id: scan
+        uses: ./.sca-syft-grype
+        with:
+          project-key: ${{ inputs.project-key }}
+          project-base-dir: ${{ inputs.project-base-dir }}
+
+      - name: Resolve previous findings file
+        id: previous-findings
+        if: steps.previous.outputs.found == 'true'
+        run: |
+          set -euo pipefail
+          mapfile -t candidates < <(find .previous-mainline-artifact -type f -name '*.json' ! -name 'sbom.json' | sort)
+          if (( ${#candidates[@]} == 0 )); then
+            echo "Previous mainline artifact contained no JSON findings file." >&2
+            exit 1
+          fi
+          if (( ${#candidates[@]} > 1 )); then
+            echo "Previous mainline artifact contained ${#candidates[@]} JSON files; using ${candidates[0]}." >&2
+          fi
+          echo "path=${candidates[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Diff against previous scan
+        id: diff
+        if: steps.previous.outputs.found == 'true'
+        env:
+          PREVIOUS_FINDINGS: ${{ steps.previous-findings.outputs.path }}
+          HEAD_FINDINGS: ${{ steps.scan.outputs.findings-json }}
+        run: |
+          # No --changed-files: see this workflow file's header comment -
+          # every DB-drift finding is in scope for a mainline alert.
+          python3 .sca-syft-grype/scripts/diff_findings.py \
+            --baseline "$PREVIOUS_FINDINGS" \
+            --head "$HEAD_FINDINGS" \
+            --out new-findings.json
+          echo "new-findings=new-findings.json" >> "$GITHUB_OUTPUT"
+
+      - name: No prior scan - establishing baseline only
+        if: steps.previous.outputs.found != 'true'
+        run: |
+          {
+            echo "### SCA syft/grype mainline scan"
+            echo "No previous scan found for \`${{ github.ref_name }}\` - this run establishes the baseline. No drift alert on a first run."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Apply blocking policy
+        id: policy
+        if: steps.previous.outputs.found == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+          BLOCKING: ${{ inputs.blocking }}
+          CHECK_NAME: ${{ inputs.check-name }}
+        run: |
+          set -o pipefail
+          {
+            echo "### SCA syft/grype mainline blocking policy"
+            python3 .sca-syft-grype/scripts/apply_policy.py \
+              --findings "$NEW_FINDINGS" \
+              --threshold "$SEVERITY_THRESHOLD" \
+              --blocking "$BLOCKING" \
+              --repo "$REPO" \
+              --sha "${{ github.sha }}" \
+              --check-name "$CHECK_NAME" \
+              --result-out policy-result.json
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # `if: always()` so a blocked policy step (which exits non-zero) above
+      # doesn't skip opening/updating the tracking issue - the issue and the
+      # failed job are two independent alert channels, not a pipeline where
+      # one gates the other. report_mainline_findings.py itself is already
+      # a no-op when new-findings.json is empty. Gated on create-issue,
+      # which defaults to false - see this workflow file's header comment.
+      - name: Report new findings as a tracking issue
+        if: always() && inputs.create-issue && steps.previous.outputs.found == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 .sca-syft-grype/scripts/report_mainline_findings.py \
+            --repo "$REPO" \
+            --new-findings "${{ steps.diff.outputs.new-findings }}" \
+            --project-key "${{ inputs.project-key }}" \
+            --labels "${{ inputs.issue-labels }}" \
+            --run-url "$RUN_URL"
+
+      - name: Upload mainline scan artifact
+        if: always() && steps.scan.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-mainline-${{ github.ref_name }}
+          path: |
+            ${{ steps.scan.outputs.sbom-json }}
+            ${{ steps.scan.outputs.findings-json }}
+            ${{ steps.scan.outputs.findings-report }}
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error

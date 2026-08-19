@@ -1,0 +1,91 @@
+name: SCA syft/grype baseline scan
+
+on:
+  workflow_call:
+    inputs:
+      baseline-branches:
+        description: >-
+          JSON array of branch names to treat as SCA baselines (main plus
+          any branch that's a PR target under branch protection). Push
+          events on these branches get a full scan, published as a findings
+          artifact keyed by commit SHA. Which branches qualify is a per-repo
+          fact, so the caller workflow's own `on.push.branches` filter
+          should match this list.
+        type: string
+        default: '["main"]'
+      project-key:
+        description: Identifier this scan is filed under - see action.yml.
+        type: string
+        default: ${{ github.event.repository.name }}
+      project-base-dir:
+        description: Path (relative to the repo root) to scan.
+        type: string
+        default: .
+      artifact-retention-days:
+        description: Retention period for the uploaded findings artifact.
+        type: number
+        default: 90
+
+jobs:
+  baseline-scan:
+    if: contains(fromJSON(inputs.baseline-branches), github.ref_name)
+    runs-on: ubuntu-latest
+    # Unlike actions-sast-sonarqube, there's no server bring-up/teardown
+    # here (syft/grype are pure CLI) - 30 minutes is still a sane cap
+    # against a wedged runner or a stuck image pull, not a reflection of
+    # any single step needing that long.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # This reusable workflow is meant to be called by other repos, so it
+      # can't assume its own composite action (action.yml) is checked out at
+      # the workspace root - that root holds the CALLER's code. Fetch this
+      # action's own repo, pinned to the exact ref this workflow file itself
+      # is running from, into a side directory instead.
+      - name: Resolve this action's own source ref
+        id: action-source
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          ref="${WORKFLOW_REF#*@}"
+          repo="${WORKFLOW_REF%%/.github/*}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this action's source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.action-source.outputs.repo }}
+          ref: ${{ steps.action-source.outputs.ref }}
+          path: .sca-syft-grype
+
+      - name: Run scan
+        id: scan
+        uses: ./.sca-syft-grype
+        with:
+          project-key: ${{ inputs.project-key }}
+          project-base-dir: ${{ inputs.project-base-dir }}
+
+      - name: Upload baseline findings artifact
+        # Bundles the SBOM and machine-readable findings JSON (what
+        # sca-pr.yml's and sca-mainline.yml's baseline resolution actually
+        # read back - see find_baseline_artifact.py) with the human-readable
+        # report, so anyone browsing this run's Artifacts section can see
+        # exact finding detail without re-running the scan.
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-baseline-${{ github.sha }}
+          path: |
+            ${{ steps.scan.outputs.sbom-json }}
+            ${{ steps.scan.outputs.findings-json }}
+            ${{ steps.scan.outputs.findings-report }}
+          retention-days: ${{ inputs.artifact-retention-days }}
+          # A baseline artifact is authoritative for every PR that resolves
+          # it by SHA, so publishing an empty one is worse than publishing
+          # none at all - the PR would diff against nothing and report every
+          # pre-existing finding as new. Fail the baseline run instead.
+          if-no-files-found: error
