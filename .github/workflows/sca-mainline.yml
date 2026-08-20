@@ -185,8 +185,13 @@ jobs:
           SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
           BLOCKING: ${{ inputs.blocking }}
           CHECK_NAME: ${{ inputs.check-name }}
+          PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
         run: |
           set -o pipefail
+          # --project-base-dir is required whenever it isn't ".": findings'
+          # `path` is relative to project-base-dir, but Check Run
+          # annotations need repo-root-relative paths to attach to the
+          # right file - see apply_policy.py's repo_relative_path().
           {
             echo "### SCA syft/grype mainline blocking policy"
             python3 .sca-syft-grype/scripts/apply_policy.py \
@@ -196,6 +201,7 @@ jobs:
               --repo "$REPO" \
               --sha "${{ github.sha }}" \
               --check-name "$CHECK_NAME" \
+              --project-base-dir "$PROJECT_BASE_DIR" \
               --result-out policy-result.json
           } | tee -a "$GITHUB_STEP_SUMMARY"
 

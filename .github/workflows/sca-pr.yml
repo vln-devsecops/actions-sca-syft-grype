@@ -308,6 +308,7 @@ jobs:
           SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
           BLOCKING: ${{ inputs.blocking }}
           CHECK_NAME: ${{ inputs.check-name }}
+          PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
         run: |
           set -o pipefail
           # GitHub downgrades GITHUB_TOKEN to read-only for a pull_request
@@ -318,6 +319,12 @@ jobs:
           # summary is the one place findings are guaranteed to be visible
           # either way, so capture apply_policy.py's own summary there too,
           # not just the baseline-resolution tier.
+          #
+          # --project-base-dir is required whenever it isn't ".": findings'
+          # `path` is relative to project-base-dir, but Check Run
+          # annotations need repo-root-relative paths to attach to the
+          # right file in the PR diff - see apply_policy.py's
+          # repo_relative_path().
           {
             echo "### SCA syft/grype blocking policy"
             python3 .sca-syft-grype/scripts/apply_policy.py \
@@ -327,6 +334,7 @@ jobs:
               --repo "$REPO" \
               --sha "$HEAD_SHA" \
               --check-name "$CHECK_NAME" \
+              --project-base-dir "$PROJECT_BASE_DIR" \
               --result-out policy-result.json
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
