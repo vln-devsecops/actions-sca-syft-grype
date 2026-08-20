@@ -1,0 +1,9 @@
+{
+  "name": "sca-syft-grype-fixture-js",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deliberately vulnerable dependency fixture - see fixtures/README.md.",
+  "dependencies": {
+    "lodash": "4.17.11"
+  }
+}

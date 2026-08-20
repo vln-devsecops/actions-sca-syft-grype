@@ -1,0 +1,6 @@
+# Deliberately vulnerable dependency fixture - see fixtures/README.md. Do
+# not upgrade this pin without also updating README.md and
+# docs/test-procedure.md's notes on what ci.yml expects to find - the point
+# of this pin is to reliably trip Grype against a real advisory
+# (CVE-2020-1747, arbitrary code execution via yaml.load).
+PyYAML==5.1

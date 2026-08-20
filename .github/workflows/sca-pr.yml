@@ -1,0 +1,365 @@
+name: SCA syft/grype PR scan
+
+on:
+  workflow_call:
+    inputs:
+      project-key:
+        description: Identifier this scan is filed under - see action.yml.
+        type: string
+        default: ${{ github.event.repository.name }}
+      project-base-dir:
+        description: Path (relative to the repo root) to scan.
+        type: string
+        default: .
+      severity-threshold:
+        description: Minimum severity (Negligible/Low/Medium/High/Critical) a new finding must have to block the job.
+        type: string
+        default: High
+      blocking:
+        description: Whether a new finding at or above severity-threshold fails the job.
+        type: boolean
+        default: true
+      post-pr-comment:
+        description: Whether to post/update a human-readable summary comment on the PR.
+        type: boolean
+        default: true
+      check-name:
+        description: Name of the GitHub Check Run this workflow creates.
+        type: string
+        default: sca-syft-grype/new-vulnerabilities
+      findings-report-retention-days:
+        description: >-
+          Retention period for the uploaded findings-report artifact (the
+          full current finding set - see scripts/render_findings_report.py).
+          Shorter than a baseline artifact's default retention since this is
+          a per-PR debugging aid, not something later runs resolve by name.
+        type: number
+        default: 30
+
+jobs:
+  pr-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Fetch base branch history
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: git fetch origin "$BASE_REF"
+
+      - name: Resolve merge-base and target HEAD
+        id: refs
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          TARGET_HEAD_SHA: ${{ github.event.pull_request.base.sha }}
+          PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
+        run: |
+          merge_base="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          echo "merge-base=${merge_base}" >> "$GITHUB_OUTPUT"
+          echo "target-head-sha=${TARGET_HEAD_SHA}" >> "$GITHUB_OUTPUT"
+
+          # Findings' `path` is relative to project-base-dir, not the repo
+          # root (see parse_findings.py) - but `git diff` paths are always
+          # repo-root-relative. Scope+strip to project-base-dir so
+          # diff_findings.py's --changed-files filter is comparing the same
+          # path space; otherwise, whenever project-base-dir isn't the repo
+          # root, every finding looks "untouched" and gets dropped.
+          base_dir="${PROJECT_BASE_DIR#./}"
+          base_dir="${base_dir%/}"
+          if [[ -z "$base_dir" || "$base_dir" == "." ]]; then
+            git diff --name-only "${merge_base}..HEAD" > changed-files.txt
+          else
+            git diff --name-only "${merge_base}..HEAD" -- "$base_dir" \
+              | sed "s#^${base_dir}/##" > changed-files.txt
+          fi
+          echo "Files touched by this PR (relative to project-base-dir):"
+          cat changed-files.txt
+
+      # This reusable workflow is meant to be called by other repos, so it
+      # can't assume its own composite action (action.yml) is checked out at
+      # the workspace root - that root holds the CALLER's code. Fetch this
+      # action's own repo, pinned to the exact ref this workflow file itself
+      # is running from, into a side directory instead.
+      - name: Resolve this action's own source ref
+        id: action-source
+        env:
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          ref="${WORKFLOW_REF#*@}"
+          repo="${WORKFLOW_REF%%/.github/*}"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+          echo "ref=${ref}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout this action's source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.action-source.outputs.repo }}
+          ref: ${{ steps.action-source.outputs.ref }}
+          path: .sca-syft-grype
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: "Look up baseline artifact (tier a: PR branch-off point)"
+        id: tier-a
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ARTIFACT_NAME: sca-baseline-${{ steps.refs.outputs.merge-base }}
+        run: |
+          found="$(python3 .sca-syft-grype/scripts/find_baseline_artifact.py \
+            --repo "$REPO" --name "$ARTIFACT_NAME" --dest .baseline-artifact)"
+          echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: "Look up baseline artifact (tier b: target branch current HEAD)"
+        id: tier-b
+        if: steps.tier-a.outputs.found != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ARTIFACT_NAME: sca-baseline-${{ steps.refs.outputs.target-head-sha }}
+        run: |
+          found="$(python3 .sca-syft-grype/scripts/find_baseline_artifact.py \
+            --repo "$REPO" --name "$ARTIFACT_NAME" --dest .baseline-artifact)"
+          echo "found=${found}" >> "$GITHUB_OUTPUT"
+
+      - name: Record baseline resolution
+        id: baseline
+        env:
+          TIER_A_FOUND: ${{ steps.tier-a.outputs.found }}
+          TIER_B_FOUND: ${{ steps.tier-b.outputs.found }}
+          MERGE_BASE: ${{ steps.refs.outputs.merge-base }}
+          TARGET_HEAD_SHA: ${{ steps.refs.outputs.target-head-sha }}
+        run: |
+          if [[ "$TIER_A_FOUND" == "true" ]]; then
+            tier="tier a: artifact for merge-base ${MERGE_BASE}"
+          elif [[ "$TIER_B_FOUND" == "true" ]]; then
+            tier="tier b: artifact for target branch HEAD ${TARGET_HEAD_SHA}"
+          else
+            tier="fallback: no artifact found, scanning target branch HEAD live in this job"
+          fi
+          echo "tier=${tier}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### SCA syft/grype baseline resolution"
+            echo "${tier}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Baseline resolution: ${tier}"
+
+      - name: Checkout target branch HEAD (fallback path only)
+        if: steps.tier-a.outputs.found != 'true' && steps.tier-b.outputs.found != 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .baseline-checkout
+
+      # project-base-dir might not exist yet on the target branch at all -
+      # e.g. this PR is the one introducing it. That's not a
+      # misconfiguration: it just means there's nothing to compare against,
+      # so every finding in the head scan is new by definition.
+      - name: Check whether target branch has project-base-dir
+        id: fallback-base-dir-check
+        if: steps.tier-a.outputs.found != 'true' && steps.tier-b.outputs.found != 'true'
+        env:
+          PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
+        run: |
+          if [[ -d ".baseline-checkout/${PROJECT_BASE_DIR}" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Scan target branch HEAD (fallback path only)
+        id: fallback-base-scan
+        if: steps.fallback-base-dir-check.outputs.exists == 'true'
+        uses: ./.sca-syft-grype
+        with:
+          project-key: ${{ inputs.project-key }}-fallback-base
+          project-base-dir: .baseline-checkout/${{ inputs.project-base-dir }}
+
+      # This scan's SBOM would otherwise be generated and discarded - only
+      # its findings-json got read (as the baseline for the diff below).
+      # Upload it alongside the report for the same audit-trail reason the
+      # PR head scan's SBOM is uploaded.
+      - name: Upload fallback baseline SBOM and report
+        if: always() && steps.fallback-base-scan.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-pr-${{ github.event.pull_request.number }}-fallback-baseline-report
+          path: |
+            ${{ steps.fallback-base-scan.outputs.sbom-json }}
+            ${{ steps.fallback-base-scan.outputs.findings-report }}
+          retention-days: ${{ inputs.findings-report-retention-days }}
+
+      - name: Use empty baseline (target branch lacks project-base-dir)
+        id: fallback-empty-baseline
+        if: steps.tier-a.outputs.found != 'true' && steps.tier-b.outputs.found != 'true' && steps.fallback-base-dir-check.outputs.exists != 'true'
+        run: |
+          echo '[]' > empty-baseline-findings.json
+          echo "findings-json=empty-baseline-findings.json" >> "$GITHUB_OUTPUT"
+
+      - name: Scan PR head
+        id: head-scan
+        uses: ./.sca-syft-grype
+        with:
+          project-key: ${{ inputs.project-key }}
+          project-base-dir: ${{ inputs.project-base-dir }}
+
+      # The full current finding set (not just this PR's new findings, which
+      # the Check Run annotations already cover inline-on-diff) - this is
+      # the durable place to see exact detail once the job ends. `if:
+      # always()` so it still uploads even if a later step (diff, policy)
+      # fails - the report itself is already complete once the scan
+      # succeeds.
+      - name: Upload PR head findings report
+        id: upload-report
+        if: always() && steps.head-scan.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-pr-${{ github.event.pull_request.number }}-findings-report
+          path: |
+            ${{ steps.head-scan.outputs.sbom-json }}
+            ${{ steps.head-scan.outputs.findings-report }}
+          retention-days: ${{ inputs.findings-report-retention-days }}
+
+      - name: Record findings report link
+        if: always() && steps.upload-report.outcome == 'success'
+        env:
+          ARTIFACT_URL: ${{ steps.upload-report.outputs.artifact-url }}
+        run: |
+          {
+            echo "### SCA syft/grype findings report"
+            echo "Full current finding set, with SBOM: ${ARTIFACT_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Resolve baseline findings file
+        id: baseline-findings
+        env:
+          TIER_A_FOUND: ${{ steps.tier-a.outputs.found }}
+          TIER_B_FOUND: ${{ steps.tier-b.outputs.found }}
+          FALLBACK_BASE_DIR_EXISTS: ${{ steps.fallback-base-dir-check.outputs.exists }}
+          FALLBACK_BASE_SCAN_FINDINGS: ${{ steps.fallback-base-scan.outputs.findings-json }}
+          FALLBACK_EMPTY_BASELINE_FINDINGS: ${{ steps.fallback-empty-baseline.outputs.findings-json }}
+        run: |
+          set -euo pipefail
+          if [[ "$TIER_A_FOUND" == "true" || "$TIER_B_FOUND" == "true" ]]; then
+            # -type f and a sort make the choice deterministic rather than
+            # dependent on directory order; an artifact is expected to hold
+            # exactly one findings JSON (plus the SBOM and report).
+            mapfile -t candidates < <(find .baseline-artifact -type f -name '*.json' ! -name 'sbom.json' | sort)
+            if (( ${#candidates[@]} == 0 )); then
+              echo "Baseline artifact contained no JSON findings file." >&2
+              exit 1
+            fi
+            if (( ${#candidates[@]} > 1 )); then
+              echo "Baseline artifact contained ${#candidates[@]} JSON files; using ${candidates[0]}." >&2
+            fi
+            path="${candidates[0]}"
+          elif [[ "$FALLBACK_BASE_DIR_EXISTS" == "true" ]]; then
+            path="$FALLBACK_BASE_SCAN_FINDINGS"
+          else
+            path="$FALLBACK_EMPTY_BASELINE_FINDINGS"
+          fi
+          if [[ -z "$path" ]]; then
+            echo "Could not resolve a baseline findings file." >&2
+            exit 1
+          fi
+          # Catch a truncated/corrupt baseline here, with a clear message,
+          # rather than as a bare JSONDecodeError out of diff_findings.py.
+          if ! jq -e 'type == "array"' "$path" >/dev/null 2>&1; then
+            echo "Baseline findings file '$path' is not a JSON array." >&2
+            exit 1
+          fi
+          echo "path=${path}" >> "$GITHUB_OUTPUT"
+
+      - name: Diff findings
+        id: diff
+        env:
+          BASELINE_FINDINGS: ${{ steps.baseline-findings.outputs.path }}
+          HEAD_FINDINGS: ${{ steps.head-scan.outputs.findings-json }}
+        run: |
+          python3 .sca-syft-grype/scripts/diff_findings.py \
+            --baseline "$BASELINE_FINDINGS" \
+            --head "$HEAD_FINDINGS" \
+            --changed-files changed-files.txt \
+            --out new-findings.json \
+            --removed-out removed-findings.json
+          echo "new-findings=new-findings.json" >> "$GITHUB_OUTPUT"
+          echo "removed-findings=removed-findings.json" >> "$GITHUB_OUTPUT"
+
+      - name: Apply blocking policy
+        id: policy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+          BLOCKING: ${{ inputs.blocking }}
+          CHECK_NAME: ${{ inputs.check-name }}
+          PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
+        run: |
+          set -o pipefail
+          # GitHub downgrades GITHUB_TOKEN to read-only for a pull_request
+          # event from a fork, regardless of `permissions:` above - so on a
+          # fork PR, apply_policy.py can't publish a Check Run (it degrades
+          # to that gracefully, see gh_api's allow_forbidden) and the "Post
+          # PR summary comment" step below is skipped outright. The job
+          # summary is the one place findings are guaranteed to be visible
+          # either way, so capture apply_policy.py's own summary there too,
+          # not just the baseline-resolution tier.
+          #
+          # --project-base-dir is required whenever it isn't ".": findings'
+          # `path` is relative to project-base-dir, but Check Run
+          # annotations need repo-root-relative paths to attach to the
+          # right file in the PR diff - see apply_policy.py's
+          # repo_relative_path().
+          {
+            echo "### SCA syft/grype blocking policy"
+            python3 .sca-syft-grype/scripts/apply_policy.py \
+              --findings "$NEW_FINDINGS" \
+              --threshold "$SEVERITY_THRESHOLD" \
+              --blocking "$BLOCKING" \
+              --repo "$REPO" \
+              --sha "$HEAD_SHA" \
+              --check-name "$CHECK_NAME" \
+              --project-base-dir "$PROJECT_BASE_DIR" \
+              --result-out policy-result.json
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Post PR summary comment
+        # Posting a comment needs pull-requests: write, which - like
+        # checks: write above - GitHub downgrades to read-only for a
+        # pull_request event from a fork regardless of the permissions:
+        # block this workflow requests. Skip outright rather than let it
+        # 403: the job summary (see the policy step above) is where a fork
+        # PR's findings are reported instead.
+        if: >-
+          always() && inputs.post-pr-comment && steps.diff.outcome == 'success'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASELINE_FINDINGS: ${{ steps.baseline-findings.outputs.path }}
+          REMOVED_FINDINGS: ${{ steps.diff.outputs.removed-findings }}
+          BASELINE_TIER: ${{ steps.baseline.outputs.tier }}
+        run: |
+          python3 .sca-syft-grype/scripts/post_pr_comment.py \
+            --repo "$REPO" \
+            --pr-number "$PR_NUMBER" \
+            --result policy-result.json \
+            --baseline-findings "$BASELINE_FINDINGS" \
+            --removed-findings "$REMOVED_FINDINGS" \
+            --baseline-tier "$BASELINE_TIER"

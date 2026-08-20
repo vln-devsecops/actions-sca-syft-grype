@@ -1,0 +1,120 @@
+name: SCA Syft/Grype
+description: >-
+  Run syft to generate an SBOM for a checked-out project, run grype against
+  that SBOM, and return a normalized vulnerability findings JSON file plus a
+  human-readable Markdown report. Both tools are pure CLI, invoked via
+  pinned Docker images (see docker-compose.tools.yml and scripts/run_scan.sh)
+  - there is no server to bring up first.
+author: vln-devsecops
+
+inputs:
+  project-key:
+    description: >-
+      Identifier this scan is filed under - used to namespace scratch output
+      paths and to label the findings report. Only needs to be unique within
+      the calling workflow, so the repo name is a fine default.
+    required: false
+    default: ${{ github.event.repository.name }}
+  project-base-dir:
+    description: Path (relative to the repo root) to scan.
+    required: false
+    default: .
+  scan-timeout-seconds:
+    description: How long to allow each of syft and grype to run before giving up.
+    required: false
+    default: "900"
+
+outputs:
+  sbom-json:
+    description: Path to the syft-json SBOM produced by this scan.
+    value: ${{ steps.scan.outputs.sbom-json }}
+  findings-json:
+    description: Path to the normalized findings JSON file produced by this scan.
+    value: ${{ steps.parse.outputs.findings-json }}
+  findings-report:
+    description: >-
+      Path to a human-readable Markdown report of every finding - see
+      scripts/render_findings_report.py. Exists because this scan leaves no
+      server or database behind once the job ends; callers are expected to
+      upload this as a build artifact or surface it in a job summary.
+    value: ${{ steps.report.outputs.findings-report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.12"
+
+    - name: Resolve pinned grype version
+      id: grype-version
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(docker compose -f "${{ github.action_path }}/docker-compose.tools.yml" --profile tools config --images | grep '/grype:' | head -1)"
+        echo "tag=${image##*:}" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve cache date bucket
+      id: cache-date
+      shell: bash
+      run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+    # Speed optimization only, not a correctness dependency: grype checks
+    # the cached DB's own build/staleness metadata against upstream and
+    # re-downloads regardless of what this restores, so a stale cache hit
+    # never serves stale vulnerability data silently (see docs/design.md).
+    # Daily key (not weekly) because this is a vulnerability DB, not a
+    # generic dependency cache - freshness matters more here. restore-keys
+    # falls back to the newest same-version cache from an earlier day so a
+    # cache miss still seeds most of the download instead of starting cold.
+    - name: Cache grype vulnerability DB
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/grype-db-cache
+        key: grype-db-${{ runner.os }}-${{ steps.grype-version.outputs.tag }}-${{ steps.cache-date.outputs.date }}
+        restore-keys: |
+          grype-db-${{ runner.os }}-${{ steps.grype-version.outputs.tag }}-
+
+    - name: Run scan
+      id: scan
+      shell: bash
+      env:
+        PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
+        PROJECT_KEY: ${{ inputs.project-key }}
+        COMPOSE_FILE: ${{ github.action_path }}/docker-compose.tools.yml
+        OUT_DIR: ${{ runner.temp }}/sca-scan/${{ inputs.project-key }}
+        GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db-cache
+        SCAN_TIMEOUT_SECONDS: ${{ inputs.scan-timeout-seconds }}
+      run: |
+        set -euo pipefail
+        "${{ github.action_path }}/scripts/run_scan.sh"
+        echo "sbom-json=${OUT_DIR}/sbom.json" >> "$GITHUB_OUTPUT"
+        echo "grype-report-json=${OUT_DIR}/grype-raw.json" >> "$GITHUB_OUTPUT"
+
+    - name: Normalize findings
+      id: parse
+      shell: bash
+      run: |
+        set -euo pipefail
+        out_dir="${RUNNER_TEMP:-/tmp}/sca-findings"
+        mkdir -p "$out_dir"
+        out_file="$out_dir/${{ inputs.project-key }}.json"
+        python3 "${{ github.action_path }}/scripts/parse_findings.py" \
+          --report "${{ steps.scan.outputs.grype-report-json }}" \
+          --out "$out_file"
+        echo "findings-json=$out_file" >> "$GITHUB_OUTPUT"
+
+    - name: Render findings report
+      id: report
+      shell: bash
+      run: |
+        set -euo pipefail
+        out_dir="${RUNNER_TEMP:-/tmp}/sca-findings"
+        mkdir -p "$out_dir"
+        report_file="$out_dir/${{ inputs.project-key }}-report.md"
+        python3 "${{ github.action_path }}/scripts/render_findings_report.py" \
+          --findings "${{ steps.parse.outputs.findings-json }}" \
+          --project-key "${{ inputs.project-key }}" \
+          --out "$report_file"
+        echo "findings-report=$report_file" >> "$GITHUB_OUTPUT"
