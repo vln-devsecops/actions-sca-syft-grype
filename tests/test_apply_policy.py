@@ -13,6 +13,7 @@ from apply_policy import (
     counts_by_severity,
     create_check_run,
     main,
+    repo_relative_path,
     severity_at_least,
     severity_for_comparison,
     severity_of,
@@ -103,6 +104,39 @@ def test_to_annotation_shapes_finding_correctly():
     assert ann["title"] == "CVE-1 in lodash@4.17.11 (Critical)"
     assert "bad" in ann["message"]
     assert "Fixed in: 4.17.12" in ann["message"]
+
+
+@pytest.mark.parametrize(
+    "path,project_base_dir,expected",
+    [
+        ("package-lock.json", ".", "package-lock.json"),
+        ("package-lock.json", "", "package-lock.json"),
+        ("package-lock.json", None, "package-lock.json"),
+        ("package-lock.json", "fixtures", "fixtures/package-lock.json"),
+        ("js/package-lock.json", "fixtures", "fixtures/js/package-lock.json"),
+        ("package-lock.json", "./fixtures", "fixtures/package-lock.json"),
+        ("package-lock.json", "fixtures/", "fixtures/package-lock.json"),
+        ("package-lock.json", "/fixtures/", "fixtures/package-lock.json"),
+    ],
+)
+def test_repo_relative_path(path, project_base_dir, expected):
+    assert repo_relative_path(path, project_base_dir) == expected
+
+
+def test_to_annotation_reroots_path_under_a_non_root_project_base_dir():
+    """A finding's `path` is relative to project-base-dir (see
+    parse_findings.py), but a Check Run annotation's `path` must be
+    relative to the repo root or GitHub silently fails to attach it to the
+    right file in the PR diff - exactly this repo's own ci.yml
+    configuration (project-base-dir: fixtures)."""
+    finding = make_finding(path="js/package-lock.json")
+    ann = to_annotation(finding, project_base_dir="fixtures")
+    assert ann["path"] == "fixtures/js/package-lock.json"
+
+
+def test_to_annotation_default_project_base_dir_leaves_path_unchanged():
+    finding = make_finding(path="package-lock.json")
+    assert to_annotation(finding)["path"] == "package-lock.json"
 
 
 def test_to_annotation_notes_no_fix_available():

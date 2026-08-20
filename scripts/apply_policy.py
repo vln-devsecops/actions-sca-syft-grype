@@ -15,6 +15,7 @@ GITHUB_TOKEN - see gh_api's allow_forbidden), so a subsequent workflow step
 import argparse
 import json
 import os
+import posixpath
 import sys
 
 from gh_client import request as gh_api
@@ -77,7 +78,24 @@ def severity_at_least(severity, threshold):
     return SEVERITY_ORDER.index(severity_for_comparison(severity)) >= SEVERITY_ORDER.index(threshold)
 
 
-def to_annotation(finding):
+def repo_relative_path(path, project_base_dir):
+    """A finding's `path` (parse_findings.py's schema) is relative to
+    project-base-dir, not the repo root - see docs/design.md and
+    sca-pr.yml's own re-rooting of --changed-files for the same reason.
+    GitHub's Check Run annotation `path`, by contrast, MUST be relative to
+    the repo root, or GitHub can't attach the annotation to the right file
+    in the PR's "Files changed" view (it silently fails to display inline,
+    rather than erroring). Left unprefixed, every annotation from a scan
+    where project-base-dir != "." points at a path that doesn't exist in
+    the repo (e.g. "package-lock.json" instead of "fixtures/package-lock.json"
+    - exactly this repo's own ci.yml configuration)."""
+    base = (project_base_dir or ".").strip("/")
+    if base in ("", "."):
+        return path
+    return posixpath.normpath(f"{base}/{path}")
+
+
+def to_annotation(finding, project_base_dir="."):
     severity = severity_of(finding)
     title = f"{finding['id']} in {finding['package']}@{finding['version']} ({severity})"
     message = finding.get("description") or ""
@@ -87,7 +105,7 @@ def to_annotation(finding):
     elif finding.get("fixState") in ("not-fixed", "wont-fix"):
         message = f"{message}\n\nNo fix currently available ({finding['fixState']}).".strip()
     return {
-        "path": finding["path"],
+        "path": repo_relative_path(finding["path"], project_base_dir),
         "start_line": 1,
         "end_line": 1,
         "annotation_level": ANNOTATION_LEVEL[severity],
@@ -185,6 +203,14 @@ def main():  # pragma: no cover - CLI glue over the above, validated live
     parser.add_argument("--findings", required=True, help="Path to new-findings JSON (diff_findings.py output)")
     parser.add_argument("--threshold", default="High", choices=SEVERITY_ORDER)
     parser.add_argument("--blocking", default="true", choices=["true", "false"])
+    parser.add_argument(
+        "--project-base-dir", default=".",
+        help=(
+            "Path (relative to the repo root) that was scanned - see action.yml. "
+            "Findings' `path` is relative to this, but Check Run annotations need "
+            "repo-root-relative paths; see repo_relative_path()."
+        ),
+    )
     parser.add_argument("--repo", required=True, help="owner/repo")
     parser.add_argument("--sha", required=True, help="commit SHA the check run attaches to (PR head SHA)")
     parser.add_argument("--check-name", default="sca-syft-grype/new-vulnerabilities")
@@ -211,7 +237,7 @@ def main():  # pragma: no cover - CLI glue over the above, validated live
         conclusion = "success"
 
     summary = build_summary(findings, blocking_findings, args.threshold, blocking_enabled)
-    annotations = [to_annotation(f) for f in findings]
+    annotations = [to_annotation(f, args.project_base_dir) for f in findings]
 
     result = {
         "threshold": args.threshold,
