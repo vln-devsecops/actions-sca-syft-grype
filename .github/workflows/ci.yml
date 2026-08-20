@@ -62,6 +62,25 @@ jobs:
       project-key: actions-sca-syft-grype-fixtures
       project-base-dir: fixtures
 
+  sast-baseline:
+    if: github.event_name == 'push'
+    needs: unit-tests
+    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-baseline.yml@v1
+    permissions:
+      contents: read
+    with:
+      baseline-branches: '["dev"]'
+
+  sast-pr-scan:
+    if: github.event_name == 'pull_request'
+    needs: unit-tests
+    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-pr.yml@v1
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+      actions: read
+
   # Not wired to push/pull_request: sca-mainline.yml's whole point is
   # detecting drift between two scans of otherwise-unchanged code, which
   # doesn't have a natural trigger on every CI run the way baseline/pr-scan
