@@ -65,7 +65,11 @@ jobs:
   sast-baseline:
     if: github.event_name == 'push'
     needs: unit-tests
-    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-baseline.yml@v1
+    # TEMPORARY: pinned to the commit SHA of a not-yet-released fix
+    # (vln-devsecops/actions-sast-sonarqube#35) to verify it actually works
+    # before that repo cuts a new v1.x.y tag. Switch back to @v1 once that
+    # fix is released.
+    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-baseline.yml@5f35969c6074a00813a85a3bed6894140be3de6c
     permissions:
       contents: read
     with:
@@ -74,7 +78,8 @@ jobs:
   sast-pr-scan:
     if: github.event_name == 'pull_request'
     needs: unit-tests
-    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-pr.yml@v1
+    # TEMPORARY: see sast-baseline above.
+    uses: vln-devsecops/actions-sast-sonarqube/.github/workflows/sonar-pr.yml@5f35969c6074a00813a85a3bed6894140be3de6c
     permissions:
       contents: read
       checks: write
