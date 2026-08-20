@@ -69,7 +69,7 @@ runs:
     # falls back to the newest same-version cache from an earlier day so a
     # cache miss still seeds most of the download instead of starting cold.
     - name: Cache grype vulnerability DB
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/grype-db-cache
         key: grype-db-${{ runner.os }}-${{ steps.grype-version.outputs.tag }}-${{ steps.cache-date.outputs.date }}
