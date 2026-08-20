@@ -62,11 +62,6 @@ jobs:
       project-key: actions-sca-syft-grype-fixtures
       project-base-dir: fixtures
 
-  # Dogfoods vln-devsecops/actions-sast-sonarqube against this repo's own
-  # source (default project-base-dir: . - scripts/, tests/, action.yml, the
-  # workflows themselves), unlike the SCA baseline/pr-scan jobs above which
-  # scan fixtures/ (deliberately-vulnerable dependency manifests used to
-  # exercise the SCA scanner, not this repo's real code).
   sast-baseline:
     if: github.event_name == 'push'
     needs: unit-tests
