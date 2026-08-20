@@ -30,8 +30,8 @@ jobs:
   baseline-scan:
     if: contains(fromJSON(inputs.baseline-branches), github.ref_name)
     runs-on: ubuntu-latest
-    # Unlike actions-sast-sonarqube, there's no server bring-up/teardown
-    # here (syft/grype are pure CLI) - 30 minutes is still a sane cap
+    # No server bring-up/teardown here (syft/grype are pure CLI) - 30
+    # minutes is still a sane cap
     # against a wedged runner or a stuck image pull, not a reflection of
     # any single step needing that long.
     timeout-minutes: 30

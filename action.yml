@@ -4,7 +4,7 @@ description: >-
   that SBOM, and return a normalized vulnerability findings JSON file plus a
   human-readable Markdown report. Both tools are pure CLI, invoked via
   pinned Docker images (see docker-compose.tools.yml and scripts/run_scan.sh)
-  - unlike actions-sast-sonarqube, there is no server to bring up first.
+  - there is no server to bring up first.
 author: vln-devsecops
 
 inputs:

@@ -188,6 +188,20 @@ jobs:
           project-key: ${{ inputs.project-key }}-fallback-base
           project-base-dir: .baseline-checkout/${{ inputs.project-base-dir }}
 
+      # This scan's SBOM would otherwise be generated and discarded - only
+      # its findings-json got read (as the baseline for the diff below).
+      # Upload it alongside the report for the same audit-trail reason the
+      # PR head scan's SBOM is uploaded.
+      - name: Upload fallback baseline SBOM and report
+        if: always() && steps.fallback-base-scan.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca-pr-${{ github.event.pull_request.number }}-fallback-baseline-report
+          path: |
+            ${{ steps.fallback-base-scan.outputs.sbom-json }}
+            ${{ steps.fallback-base-scan.outputs.findings-report }}
+          retention-days: ${{ inputs.findings-report-retention-days }}
+
       - name: Use empty baseline (target branch lacks project-base-dir)
         id: fallback-empty-baseline
         if: steps.tier-a.outputs.found != 'true' && steps.tier-b.outputs.found != 'true' && steps.fallback-base-dir-check.outputs.exists != 'true'

@@ -1,11 +1,10 @@
 name: SCA syft/grype mainline scan
 
-# No SAST equivalent - a SAST finding is purely a function of the code, so
-# it can only change when the code changes (hence baseline-on-push,
-# diff-on-PR is the whole story there). An SCA finding is also a function of
-# Grype's vulnerability database, which moves independently of any commit:
-# a dependency nobody has touched in months can grow a new CVE overnight.
-# This workflow re-scans the current state of a branch on a recurring
+# An SCA finding is a function of Grype's vulnerability database, which
+# moves independently of any commit: a dependency nobody has touched in
+# months can grow a new CVE overnight, so baseline-on-push and diff-on-PR
+# alone aren't the whole story here. This workflow re-scans the current
+# state of a branch on a recurring
 # schedule (the caller wires the actual `schedule:` trigger - this workflow
 # only accepts workflow_call, see runbooks/sca-syft-grype.md in the
 # guidance repo) and alerts when the diff against the last mainline scan is

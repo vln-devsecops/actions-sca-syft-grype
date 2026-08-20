@@ -4,14 +4,12 @@ the findings present in head but not in baseline ("new findings").
 
 Matching rule: two findings are the same vulnerability if they share
 (id, purl, path) - the exact same package-instance, at the exact same
-vulnerability ID, in the exact same manifest/lockfile. Unlike SAST's
-line-hash matching, there's no line-churn problem here (a dependency
-finding isn't tied to a source line), so a straight tuple match is enough -
-see parse_findings.py's finding_key, which this re-exports.
+vulnerability ID, in the exact same manifest/lockfile. There's no
+line-churn problem here (a dependency finding isn't tied to a source
+line), so a straight tuple match is enough - see parse_findings.py's
+finding_key, which this re-exports.
 
-Why --changed-files matters even more here than for SAST: a SAST finding can
-only appear "new" if the code changed, because the analysis is purely a
-function of the source. An SCA finding is also a function of the
+Why --changed-files matters: an SCA finding is a function of the
 vulnerability database, which moves independently of this PR's diff - a
 dependency nobody touched can grow a new CVE between the baseline scan and
 this PR's scan purely because Grype's DB was updated in between. Filtering

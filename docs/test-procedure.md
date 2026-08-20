@@ -26,10 +26,9 @@ shellcheck scripts/*.sh
 
 Expect all tests to pass and every file in the coverage table at (or very
 close to) 100% - network/CLI-glue functions are marked `# pragma: no cover`
-deliberately (see each script). Unlike actions-sast-sonarqube's
-`fetch_findings.py`, `parse_findings.py` has no network I/O at all (grype
-has already run and written its JSON by the time it runs), so it should
-show full coverage with no exclusions.
+deliberately (see each script). `parse_findings.py` has no network I/O at
+all (grype has already run and written its JSON by the time it runs), so it
+should show full coverage with no exclusions.
 
 ## 2. Full pipeline against real syft/grype (local)
 

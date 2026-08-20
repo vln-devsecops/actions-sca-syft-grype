@@ -3,16 +3,13 @@ name: sca-syft-grype-tools
 # Inert - never started by `docker compose up` (default profile only
 # activates services with no `profiles:` list, and both entries below are
 # gated behind `tools`). Syft and Grype are pure CLI tools invoked directly
-# via `docker run` (scripts/run_scan.sh), not a server/DB stack like
-# actions-sast-sonarqube's ephemeral SonarQube+Postgres pair - there is
-# nothing to bring up or tear down here.
+# via `docker run` (scripts/run_scan.sh) - there is no server/DB stack to
+# bring up or tear down here.
 #
 # This file exists purely so Dependabot's `docker` ecosystem scan has one
 # place to track and bump both pinned image tags; run_scan.sh reads them
 # back out via `docker compose config --images --profile tools` at run time,
-# so a version bump never has to touch two files. Same trick
-# actions-sast-sonarqube's docker-compose.ephemeral.yml uses for its inert
-# `scanner` service.
+# so a version bump never has to touch two files.
 services:
   syft:
     image: ghcr.io/anchore/syft:v1.51.0

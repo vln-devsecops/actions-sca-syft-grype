@@ -2,8 +2,7 @@
 # Run syft against PROJECT_BASE_DIR to produce an SBOM, then run grype
 # against that SBOM to produce a raw vulnerability report. Both tools are
 # pure CLI, invoked via pinned `docker run` images (see docker-compose.tools.yml)
-# - no server to wait for, no bootstrap step, unlike actions-sast-sonarqube's
-# run_scan.sh.
+# - no server to wait for, no bootstrap step.
 #
 # Required env: PROJECT_BASE_DIR, PROJECT_KEY, COMPOSE_FILE (path to
 #                docker-compose.tools.yml, used only to read back the pinned
@@ -46,12 +45,11 @@ echo "Using grype image: ${GRYPE_IMAGE}"
 
 # Both images run as a baked-in non-root user by default, whose home
 # directory (where syft/grype would otherwise cache config/state) isn't
-# writable by whichever host uid we run as instead - same reasoning as
-# actions-sast-sonarqube's run_scan.sh SCANNER_CACHE_DIR trick. --user
-# matches the host checkout owner so bind-mounted output is writable.
+# writable by whichever host uid we run as instead. --user matches the host
+# checkout owner so bind-mounted output is writable.
 #
-# HOME=/tmp alone is NOT enough, unlike the SAST scanner image: these images'
-# baked-in /tmp is root-owned and not world-writable, so a non-root --user
+# HOME=/tmp alone is NOT enough: these images' baked-in /tmp is root-owned
+# and not world-writable, so a non-root --user
 # gets a bare "permission denied" trying to create anything under it -
 # confirmed live (grype fatally fails "unable to create listing temp file"
 # for a DB-metadata temp file it writes straight to $TMPDIR, entirely

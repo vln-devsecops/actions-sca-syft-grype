@@ -120,9 +120,9 @@ def test_coerce_severity_returns_valid_value_unchanged():
 
 
 def test_coerce_severity_accepts_unknown_as_a_real_value():
-    """Unlike SAST's fully-guaranteed severity, Grype legitimately reports
-    "Unknown" for a vulnerability with no CVSS score yet - that's
-    informational, not a data-quality problem, so it must survive as-is."""
+    """Grype legitimately reports "Unknown" for a vulnerability with no
+    CVSS score yet - that's informational, not a data-quality problem, so
+    it must survive as-is."""
     assert _coerce_severity("Unknown", "desc") == "Unknown"
 
 
@@ -164,8 +164,7 @@ def test_finding_key_uses_id_purl_path():
 
 def test_normalize_dedupes_identical_findings_across_matches():
     """Defensive: two matches that would normalize to the exact same
-    (id, purl, path) must not double-count, mirroring SAST's
-    fetch_findings.py._dedupe guard against double-counting."""
+    (id, purl, path) must not double-count."""
     match = make_match()
     report = {"matches": [match, match]}
     findings = normalize(report)

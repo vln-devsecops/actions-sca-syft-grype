@@ -102,14 +102,12 @@ artifact - see its docstring.
 
 Two findings across independent scans are the same vulnerability if they
 share `(id, purl, path)` - the exact vulnerability ID, on the exact same
-package instance, at the exact same manifest/lockfile path. Unlike SAST
-findings, there's no line-number churn problem here (a dependency finding
-isn't tied to a source line), so this is a straight tuple match - see
-`scripts/parse_findings.py`'s `finding_key`, reused by `diff_findings.py`.
+package instance, at the exact same manifest/lockfile path. There's no
+line-number churn problem here (a dependency finding isn't tied to a source
+line), so this is a straight tuple match - see `scripts/parse_findings.py`'s
+`finding_key`, reused by `diff_findings.py`.
 
-**Why `--changed-files` filtering matters more for SCA than for SAST**: a
-SAST finding can only appear "new" if the code changed, because static
-analysis is purely a function of the source. An SCA finding is also a
+**Why `--changed-files` filtering matters**: an SCA finding is a
 function of the vulnerability database, which moves independently of any
 commit. `sca-pr.yml` filters new findings down to the manifest/lockfile
 paths the PR actually touched, specifically to exclude "the database moved
@@ -148,9 +146,9 @@ possible risk. See `docs/design.md`.
 
 ### Recurring mainline scan
 
-`sca-mainline.yml` is not a SAST pattern - it exists because grype's
-vulnerability database is a moving target independent of any commit. A
-consumer repo wires its own `schedule:` trigger to it (see
+`sca-mainline.yml` exists because grype's vulnerability database is a
+moving target independent of any commit. A consumer repo wires its own
+`schedule:` trigger to it (see
 `runbooks/sca-syft-grype.md` in the `guidance` repo for the exact block);
 each run re-scans the branch, diffs against the last mainline scan, and:
 
@@ -258,8 +256,7 @@ CI, but not yet against a real external consumer repo's PRs and scheduled
 runs end to end - see `docs/test-procedure.md` for what that validation
 looks like when it happens.
 
-Artifact retention: 90 days for `sca-baseline-<sha>` (SHA-keyed, matches
-actions-sast-sonarqube's default), 14 days for the rolling
+Artifact retention: 90 days for `sca-baseline-<sha>` (SHA-keyed), 14 days for the rolling
 `sca-mainline-<branch>` artifact (superseded by every subsequent scheduled
 run, so an old copy has no lasting value), 30 days for the per-PR findings
 report.

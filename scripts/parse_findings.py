@@ -19,17 +19,16 @@ same shape):
       "description": "string"
     }
 
-Unlike SAST's fetch_findings.py, this has no network I/O at all - grype has
-already run and written its report to a file by the time this script sees
-it, so every function here is directly unit-testable (see tests/) rather
-than needing `# pragma: no cover`.
+This has no network I/O at all - grype has already run and written its
+report to a file by the time this script sees it, so every function here is
+directly unit-testable (see tests/) rather than needing `# pragma: no
+cover`.
 
 One Grype `matches[]` entry can carry more than one `artifact.locations[]`
 entry (the same package/version found via more than one manifest under
 project-base-dir, e.g. both a root and a workspace-package lockfile). Each
 location becomes its own finding, since this action's diffing and blocking
-policy operate per-path (mirroring how SAST's findings are per-path) - see
-diff_findings.py's `filter_by_changed_files`.
+policy operate per-path - see diff_findings.py's `filter_by_changed_files`.
 """
 import argparse
 import json
@@ -133,8 +132,7 @@ def normalize_match(match):
 
 def finding_key(finding):
     """Diffing identity - see diff_findings.py. Exposed here too since
-    normalize() uses it to dedupe overlapping matches (see below), the same
-    way SAST's fetch_findings.py dedupes across partitioned sub-queries."""
+    normalize() uses it to dedupe overlapping matches (see below)."""
     return (finding["id"], finding["purl"], finding["path"])
 
 

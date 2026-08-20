@@ -4,21 +4,17 @@ Architecture-level rationale that doesn't belong in the README (a usage
 guide) or in a single script's comments (not tied to one line of code). Add
 to this file as more such decisions come up.
 
-## Why no ephemeral server, unlike actions-sast-sonarqube?
+## Why no ephemeral server
 
 Syft and grype are pure CLI tools - syft reads a directory on disk and
 writes an SBOM, grype reads that SBOM and writes a vulnerability report.
-Neither needs a database or a running service the way SonarQube Community
-Build does. `action.yml` runs both directly via pinned `docker run`
-invocations (`scripts/run_scan.sh`); there is no `docker compose up -d` /
-`down -v` pair anywhere in this repo.
+Neither needs a database or a running service. `action.yml` runs both
+directly via pinned `docker run` invocations (`scripts/run_scan.sh`); there
+is no `docker compose up -d` / `down -v` pair anywhere in this repo.
 
 `docker-compose.tools.yml` still exists despite that - not to be brought up,
 but as a single Dependabot-tracked place pinning both image tags, which
 `run_scan.sh` reads back at run time (`docker compose config --images`).
-Same trick actions-sast-sonarqube's `docker-compose.ephemeral.yml` uses for
-its inert `scanner` service, repurposed here since there's no real stack to
-declare alongside it.
 
 ## Grype vulnerability DB caching is a speed optimization, not a correctness dependency
 
@@ -34,13 +30,12 @@ key's date granularity is therefore about keeping *most* runs fast, not
 about bounding how stale a result can be - that bound comes from grype's own
 update check.
 
-## Why `diff_findings.py`'s `--changed-files` filter matters more here than in SAST
+## Why `diff_findings.py`'s `--changed-files` filter matters
 
-A SAST finding is purely a function of the source code - it can only appear
-"new" if the code changed. An SCA finding is also a function of the
-vulnerability database, which moves independently of any commit: a
-dependency nobody touched can grow a new CVE between a baseline scan and a
-later PR scan purely because grype's DB updated in between.
+An SCA finding is a function of the vulnerability database, which moves
+independently of any commit: a dependency nobody touched can grow a new CVE
+between a baseline scan and a later PR scan purely because grype's DB
+updated in between.
 `sca-pr.yml` reuses `diff_findings.py`'s `--changed-files` filter (matching
 a finding's `path` - i.e. the manifest/lockfile - against files the PR
 actually touched) specifically to exclude that DB-drift noise from the PR's
