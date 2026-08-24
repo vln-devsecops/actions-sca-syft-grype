@@ -93,7 +93,7 @@ jobs:
       - name: Resolve this action's own source ref
         id: action-source
         env:
-          WORKFLOW_REF: ${{ github.job_workflow_ref }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
         run: |
           ref="${WORKFLOW_REF#*@}"
           repo="${WORKFLOW_REF%%/.github/*}"
