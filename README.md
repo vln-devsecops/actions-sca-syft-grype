@@ -48,8 +48,9 @@ action.yml                     Composite action: "run syft + grype against a
 .github/workflows/
   sca-baseline.yml              Reusable workflow (workflow_call). Scans HEAD
                                  of a push to a baseline branch, uploads the
-                                 SBOM, findings (JSON), and report (Markdown)
-                                 as artifact "sca-baseline-<sha>".
+                                 SBOMs (syft-json and CycloneDX), findings
+                                 (JSON), and report (Markdown) as artifact
+                                 "sca-baseline-<sha>".
 
   sca-pr.yml                    Reusable workflow (workflow_call). Resolves a
                                  baseline (see below), scans PR HEAD, diffs,

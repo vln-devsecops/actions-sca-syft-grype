@@ -199,6 +199,7 @@ jobs:
           name: sca-pr-${{ github.event.pull_request.number }}-fallback-baseline-report
           path: |
             ${{ steps.fallback-base-scan.outputs.sbom-json }}
+            ${{ steps.fallback-base-scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.fallback-base-scan.outputs.findings-report }}
           retention-days: ${{ inputs.findings-report-retention-days }}
 
@@ -230,6 +231,7 @@ jobs:
           name: sca-pr-${{ github.event.pull_request.number }}-findings-report
           path: |
             ${{ steps.head-scan.outputs.sbom-json }}
+            ${{ steps.head-scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.head-scan.outputs.findings-report }}
           retention-days: ${{ inputs.findings-report-retention-days }}
 

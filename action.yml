@@ -28,6 +28,13 @@ outputs:
   sbom-json:
     description: Path to the syft-json SBOM produced by this scan.
     value: ${{ steps.scan.outputs.sbom-json }}
+  sbom-cyclonedx-json:
+    description: >-
+      Path to the CycloneDX (JSON) SBOM produced by this scan - the same
+      scan as sbom-json, just a second syft output writer. For downstream
+      consumers that expect the CycloneDX standard rather than syft's own
+      schema; grype itself keeps consuming sbom-json.
+    value: ${{ steps.scan.outputs.sbom-cyclonedx-json }}
   findings-json:
     description: Path to the normalized findings JSON file produced by this scan.
     value: ${{ steps.parse.outputs.findings-json }}
@@ -90,6 +97,7 @@ runs:
         set -euo pipefail
         "${{ github.action_path }}/scripts/run_scan.sh"
         echo "sbom-json=${OUT_DIR}/sbom.json" >> "$GITHUB_OUTPUT"
+        echo "sbom-cyclonedx-json=${OUT_DIR}/sbom.cdx.json" >> "$GITHUB_OUTPUT"
         echo "grype-report-json=${OUT_DIR}/grype-raw.json" >> "$GITHUB_OUTPUT"
 
     - name: Normalize findings

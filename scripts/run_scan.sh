@@ -78,6 +78,10 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Generating SBOM for ${ABS_PROJECT_BASE_DIR} (project '${PROJECT_KEY}')..."
+# Two -o flags, one syft invocation: same process, same filesystem walk,
+# just a second output writer. syft-json remains what grype reads below;
+# the CycloneDX copy is purely an additional artifact for downstream
+# consumers that expect that standard format instead of syft's own schema.
 timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e HOME=/tmp \
@@ -85,10 +89,17 @@ timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   -v "${ABS_OUT_DIR}:/out" \
   -v "${TOOL_TMP_DIR}:/tmp" \
   "${SYFT_IMAGE}" \
-  dir:/src -o syft-json=/out/sbom.json
+  dir:/src \
+  -o syft-json=/out/sbom.json \
+  -o cyclonedx-json=/out/sbom.cdx.json
 
 if [[ ! -f "${ABS_OUT_DIR}/sbom.json" ]]; then
   echo "syft did not produce ${ABS_OUT_DIR}/sbom.json." >&2
+  exit 1
+fi
+
+if [[ ! -f "${ABS_OUT_DIR}/sbom.cdx.json" ]]; then
+  echo "syft did not produce ${ABS_OUT_DIR}/sbom.cdx.json." >&2
   exit 1
 fi
 
