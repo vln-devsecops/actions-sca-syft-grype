@@ -232,6 +232,7 @@ jobs:
           name: sca-mainline-${{ github.ref_name }}
           path: |
             ${{ steps.scan.outputs.sbom-json }}
+            ${{ steps.scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.scan.outputs.findings-json }}
             ${{ steps.scan.outputs.findings-report }}
           retention-days: ${{ inputs.artifact-retention-days }}
