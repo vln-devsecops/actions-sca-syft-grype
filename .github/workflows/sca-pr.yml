@@ -35,6 +35,17 @@ on:
           a per-PR debugging aid, not something later runs resolve by name.
         type: number
         default: 30
+      include-dev-dependencies:
+        description: >-
+          Whether syft should catalog development-scoped dependencies (e.g.
+          npm devDependencies) in addition to production ones - see
+          action.yml. Must match the value sca-baseline.yml was called with
+          for this same repo: when the diff resolves a stored baseline
+          artifact (tiers a/b), a mismatch is checked for and fails the job
+          loudly rather than let a scope change look like a wave of new
+          findings.
+        type: boolean
+        default: false
 
 jobs:
   pr-scan:
@@ -187,6 +198,7 @@ jobs:
         with:
           project-key: ${{ inputs.project-key }}-fallback-base
           project-base-dir: .baseline-checkout/${{ inputs.project-base-dir }}
+          include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
 
       # This scan's SBOM would otherwise be generated and discarded - only
       # its findings-json got read (as the baseline for the diff below).
@@ -201,6 +213,7 @@ jobs:
             ${{ steps.fallback-base-scan.outputs.sbom-json }}
             ${{ steps.fallback-base-scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.fallback-base-scan.outputs.findings-report }}
+            ${{ steps.fallback-base-scan.outputs.scan-metadata }}
           retention-days: ${{ inputs.findings-report-retention-days }}
 
       - name: Use empty baseline (target branch lacks project-base-dir)
@@ -216,6 +229,7 @@ jobs:
         with:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
+          include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
 
       # The full current finding set (not just this PR's new findings, which
       # the Check Run annotations already cover inline-on-diff) - this is
@@ -233,6 +247,7 @@ jobs:
             ${{ steps.head-scan.outputs.sbom-json }}
             ${{ steps.head-scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.head-scan.outputs.findings-report }}
+            ${{ steps.head-scan.outputs.scan-metadata }}
           retention-days: ${{ inputs.findings-report-retention-days }}
 
       - name: Record findings report link
@@ -253,13 +268,14 @@ jobs:
           FALLBACK_BASE_DIR_EXISTS: ${{ steps.fallback-base-dir-check.outputs.exists }}
           FALLBACK_BASE_SCAN_FINDINGS: ${{ steps.fallback-base-scan.outputs.findings-json }}
           FALLBACK_EMPTY_BASELINE_FINDINGS: ${{ steps.fallback-empty-baseline.outputs.findings-json }}
+          INCLUDE_DEV_DEPENDENCIES: ${{ inputs.include-dev-dependencies }}
         run: |
           set -euo pipefail
           if [[ "$TIER_A_FOUND" == "true" || "$TIER_B_FOUND" == "true" ]]; then
             # -type f and a sort make the choice deterministic rather than
             # dependent on directory order; an artifact is expected to hold
             # exactly one findings JSON (plus the SBOM and report).
-            mapfile -t candidates < <(find .baseline-artifact -type f -name '*.json' ! -name 'sbom.json' | sort)
+            mapfile -t candidates < <(find .baseline-artifact -type f -name '*.json' ! -name 'sbom.json' ! -name 'scan-metadata.json' | sort)
             if (( ${#candidates[@]} == 0 )); then
               echo "Baseline artifact contained no JSON findings file." >&2
               exit 1
@@ -268,6 +284,26 @@ jobs:
               echo "Baseline artifact contained ${#candidates[@]} JSON files; using ${candidates[0]}." >&2
             fi
             path="${candidates[0]}"
+
+            # The baseline artifact's scan-metadata.json records the
+            # include-dev-dependencies setting sca-baseline.yml was called
+            # with. A missing file predates this field, which only ever
+            # shipped with the false default - treat it as false rather
+            # than skip the check. A mismatch here means every
+            # newly-in-scope dependency's findings would show up as "new"
+            # in this PR purely from a scope change, not anything the PR
+            # did - fail loudly instead of blocking (or worse, silently
+            # not blocking) on it.
+            baseline_metadata="$(find .baseline-artifact -type f -name 'scan-metadata.json' | head -1)"
+            if [[ -n "$baseline_metadata" ]]; then
+              baseline_include_dev="$(jq -r '.includeDevDependencies' "$baseline_metadata")"
+            else
+              baseline_include_dev="false"
+            fi
+            if [[ "$baseline_include_dev" != "$INCLUDE_DEV_DEPENDENCIES" ]]; then
+              echo "The baseline artifact was scanned with include-dev-dependencies=${baseline_include_dev}, but this run is configured with include-dev-dependencies=${INCLUDE_DEV_DEPENDENCIES}. Diffing across a scope change would misreport every newly-in-scope dependency as a new finding. Fix the mismatch (align sca-baseline.yml's and sca-pr.yml's include-dev-dependencies for this repo) before re-running." >&2
+              exit 1
+            fi
           elif [[ "$FALLBACK_BASE_DIR_EXISTS" == "true" ]]; then
             path="$FALLBACK_BASE_SCAN_FINDINGS"
           else

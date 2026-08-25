@@ -41,8 +41,16 @@ def _vulnerability_cell(finding):
     return cell
 
 
-def render_report(findings, project_key):
+def render_report(findings, project_key, include_dev_dependencies=False):
     lines = [f"# SCA syft+grype findings report - `{project_key}`", ""]
+
+    scope = (
+        "production and development dependencies"
+        if include_dev_dependencies
+        else "production dependencies only (development dependencies excluded)"
+    )
+    lines.append(f"Scope: {scope}.")
+    lines.append("")
 
     if not findings:
         lines.append("No findings.")
@@ -73,12 +81,13 @@ def main():  # pragma: no cover - CLI glue over the above
     parser.add_argument("--findings", required=True, help="Path to a normalized findings JSON file (parse_findings.py's schema)")
     parser.add_argument("--project-key", required=True)
     parser.add_argument("--out", required=True, help="Path to write the Markdown report to")
+    parser.add_argument("--include-dev-dependencies", default="false", choices=["true", "false"])
     args = parser.parse_args()
 
     with open(args.findings) as f:
         findings = json.load(f)
 
-    report = render_report(findings, args.project_key)
+    report = render_report(findings, args.project_key, include_dev_dependencies=args.include_dev_dependencies == "true")
 
     with open(args.out, "w") as f:
         f.write(report)

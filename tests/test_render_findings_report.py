@@ -25,6 +25,21 @@ def test_render_report_includes_count_and_columns():
     assert "`package-lock.json`" in report
 
 
+def test_render_report_states_production_only_scope_by_default():
+    report = render_report([make_finding()], "myproj")
+    assert "Scope: production dependencies only (development dependencies excluded)." in report
+
+
+def test_render_report_states_scope_when_dev_dependencies_included():
+    report = render_report([make_finding()], "myproj", include_dev_dependencies=True)
+    assert "Scope: production and development dependencies." in report
+
+
+def test_render_report_states_scope_even_with_no_findings():
+    report = render_report([], "myproj")
+    assert "Scope: production dependencies only (development dependencies excluded)." in report
+
+
 def test_render_report_links_vulnerability_id_to_data_source():
     report = render_report([make_finding()], "myproj")
     assert "[CVE-2019-10744](https://example.org/CVE-2019-10744)" in report
@@ -83,13 +98,20 @@ def test_main_writes_report_to_out_file(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr(
         "sys.argv",
-        ["render_findings_report.py", "--findings", str(findings_path), "--project-key", "myproj", "--out", str(out_path)],
+        [
+            "render_findings_report.py",
+            "--findings", str(findings_path),
+            "--project-key", "myproj",
+            "--out", str(out_path),
+            "--include-dev-dependencies", "true",
+        ],
     )
     main()
 
     content = out_path.read_text()
     assert "myproj" in content
     assert "lodash" in content
+    assert "Scope: production and development dependencies." in content
 
     captured = capsys.readouterr()
     assert "Wrote findings report (1 finding(s))" in captured.out

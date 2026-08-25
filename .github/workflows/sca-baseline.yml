@@ -25,6 +25,16 @@ on:
         description: Retention period for the uploaded findings artifact.
         type: number
         default: 90
+      include-dev-dependencies:
+        description: >-
+          Whether syft should catalog development-scoped dependencies (e.g.
+          npm devDependencies) in addition to production ones - see
+          action.yml. Must match the value passed to sca-pr.yml and
+          sca-mainline.yml for this same repo: they diff against this
+          workflow's baseline artifact and fail loudly on a mismatch rather
+          than let a scope change look like a wave of new findings.
+        type: boolean
+        default: false
 
 jobs:
   baseline-scan:
@@ -69,6 +79,7 @@ jobs:
         with:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
+          include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
 
       - name: Upload baseline findings artifact
         # Bundles the SBOM and machine-readable findings JSON (what
@@ -84,6 +95,7 @@ jobs:
             ${{ steps.scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.scan.outputs.findings-json }}
             ${{ steps.scan.outputs.findings-report }}
+            ${{ steps.scan.outputs.scan-metadata }}
           retention-days: ${{ inputs.artifact-retention-days }}
           # A baseline artifact is authoritative for every PR that resolves
           # it by SHA, so publishing an empty one is worse than publishing
