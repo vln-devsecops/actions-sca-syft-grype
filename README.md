@@ -131,6 +131,40 @@ findings inline for that).
 artifacts alongside the JSON and SBOM. `sca-pr.yml` uploads the PR head
 scan's report as its own artifact and links it from the job's step summary.
 
+### Dependency scope: production vs. development
+
+**By default, this scan only covers production dependencies.** For
+ecosystems that distinguish the two (currently: JavaScript/npm), syft does
+not catalog development-scoped dependencies (npm `devDependencies`) unless
+told to, and this action doesn't tell it to - so a devDependency, however
+vulnerable, is never in the SBOM and grype never evaluates it. A finding
+report reading "No findings." looks identical whether the scan cleared your
+dev tooling or never looked at it at all - the report's `Scope:` line at the
+top states which happened.
+
+Set `include-dev-dependencies: true` (an input on `action.yml` and all
+three reusable workflows) to catalog both. Worth doing deliberately rather
+than by default: a devDependency doesn't ship, but it does run with
+repository credentials on CI - `event-stream` and the `ua-parser-js`
+supply-chain compromises were both build-time devDependency compromises, the
+exact class of incident this broader scope exists to catch. The tradeoff is
+volume: a typical JS project's devDependency tree can be several times the
+size of its production one, and most of what a broader scan surfaces (a
+ReDoS in a linter, prototype pollution in a build tool) isn't reachable by
+an attacker against the deployed service.
+
+**Keep the setting consistent for a given repo.** `sca-pr.yml` and
+`sca-mainline.yml` diff a fresh scan against a stored baseline scan; if the
+two scans used different `include-dev-dependencies` settings, every
+dependency that's newly in scope looks like a new finding, not a genuine
+change. Both workflows check the setting recorded in the baseline artifact
+against their own and fail the job with a clear error on a mismatch, rather
+than let it through as a wall of false "new" findings.
+
+Other ecosystems have the same production/development distinction (Python's
+dev extras, Go's test-only requirements) and may get their own scope input
+later; `include-dev-dependencies` is JavaScript-only for now.
+
 ### Blocking policy
 
 Our own, evaluated only against the new-findings set - not any built-in

@@ -23,6 +23,20 @@ inputs:
     description: How long to allow each of syft and grype to run before giving up.
     required: false
     default: "900"
+  include-dev-dependencies:
+    description: >-
+      Whether syft should catalog development-scoped dependencies (e.g. npm
+      devDependencies) in addition to production ones, for ecosystems that
+      distinguish the two. Defaults to false: syft's own default, so a
+      devDependency is never catalogued and grype therefore never evaluates
+      it - a vulnerable devDependency passes with a clean report rather than
+      "found but not blocking". See README.md for the tradeoffs. Whatever
+      value is used must stay consistent between a baseline scan and the
+      scans diffed against it (sca-pr.yml, sca-mainline.yml already enforce
+      this) - flipping it on a repo with an existing baseline otherwise
+      makes every devDependency finding look "new".
+    required: false
+    default: "false"
 
 outputs:
   sbom-json:
@@ -45,6 +59,14 @@ outputs:
       server or database behind once the job ends; callers are expected to
       upload this as a build artifact or surface it in a job summary.
     value: ${{ steps.report.outputs.findings-report }}
+  scan-metadata:
+    description: >-
+      Path to a small JSON file recording the scan settings that affect what
+      gets catalogued - currently just includeDevDependencies. Callers that
+      diff two scans (sca-pr.yml, sca-mainline.yml) bundle this into their
+      baseline artifacts and check it against the current run's own setting
+      before trusting the diff.
+    value: ${{ steps.scan.outputs.scan-metadata }}
 
 runs:
   using: composite
@@ -93,12 +115,18 @@ runs:
         OUT_DIR: ${{ runner.temp }}/sca-scan/${{ inputs.project-key }}
         GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db-cache
         SCAN_TIMEOUT_SECONDS: ${{ inputs.scan-timeout-seconds }}
+        INCLUDE_DEV_DEPENDENCIES: ${{ inputs.include-dev-dependencies }}
       run: |
         set -euo pipefail
         "${{ github.action_path }}/scripts/run_scan.sh"
         echo "sbom-json=${OUT_DIR}/sbom.json" >> "$GITHUB_OUTPUT"
         echo "sbom-cyclonedx-json=${OUT_DIR}/sbom.cdx.json" >> "$GITHUB_OUTPUT"
         echo "grype-report-json=${OUT_DIR}/grype-raw.json" >> "$GITHUB_OUTPUT"
+        # Recorded alongside the scan outputs (not computed downstream) so
+        # every artifact that bundles this scan carries the setting that
+        # produced it - see the scan-metadata output's description.
+        printf '{"includeDevDependencies": %s}\n' "${INCLUDE_DEV_DEPENDENCIES}" > "${OUT_DIR}/scan-metadata.json"
+        echo "scan-metadata=${OUT_DIR}/scan-metadata.json" >> "$GITHUB_OUTPUT"
 
     - name: Normalize findings
       id: parse
@@ -124,5 +152,6 @@ runs:
         python3 "${{ github.action_path }}/scripts/render_findings_report.py" \
           --findings "${{ steps.parse.outputs.findings-json }}" \
           --project-key "${{ inputs.project-key }}" \
-          --out "$report_file"
+          --out "$report_file" \
+          --include-dev-dependencies "${{ inputs.include-dev-dependencies }}"
         echo "findings-report=$report_file" >> "$GITHUB_OUTPUT"

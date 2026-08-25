@@ -14,6 +14,10 @@
 #                up on exit - action.yml normally sets this to a path an
 #                actions/cache step manages, for speed across runs; see
 #                docs/design.md)
+#                INCLUDE_DEV_DEPENDENCIES ("true"/"false", default "false") -
+#                forwarded to syft's javascript cataloger as
+#                SYFT_JAVASCRIPT_INCLUDE_DEV_DEPENDENCIES. syft's own default
+#                is false (production dependencies only); see README.md.
 set -euo pipefail
 
 : "${PROJECT_BASE_DIR:?PROJECT_BASE_DIR is required}"
@@ -22,6 +26,7 @@ set -euo pipefail
 : "${OUT_DIR:?OUT_DIR is required}"
 
 SCAN_TIMEOUT_SECONDS="${SCAN_TIMEOUT_SECONDS:-900}"
+INCLUDE_DEV_DEPENDENCIES="${INCLUDE_DEV_DEPENDENCIES:-false}"
 
 if [[ ! -d "$PROJECT_BASE_DIR" ]]; then
   echo "PROJECT_BASE_DIR '${PROJECT_BASE_DIR}' does not exist or is not a directory." >&2
@@ -85,6 +90,7 @@ echo "Generating SBOM for ${ABS_PROJECT_BASE_DIR} (project '${PROJECT_KEY}')..."
 timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   --user "$(id -u):$(id -g)" \
   -e HOME=/tmp \
+  -e SYFT_JAVASCRIPT_INCLUDE_DEV_DEPENDENCIES="${INCLUDE_DEV_DEPENDENCIES}" \
   -v "${ABS_PROJECT_BASE_DIR}:/src:ro" \
   -v "${ABS_OUT_DIR}:/out" \
   -v "${TOOL_TMP_DIR}:/tmp" \

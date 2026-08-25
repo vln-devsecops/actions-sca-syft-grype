@@ -73,6 +73,15 @@ on:
           scheduled runs.
         type: number
         default: 14
+      include-dev-dependencies:
+        description: >-
+          Whether syft should catalog development-scoped dependencies (e.g.
+          npm devDependencies) in addition to production ones - see
+          action.yml. Changing this between scheduled runs is checked
+          against the previous mainline artifact and fails loudly on a
+          mismatch, rather than let a scope change look like drift.
+        type: boolean
+        default: false
 
 jobs:
   mainline-scan:
@@ -136,13 +145,16 @@ jobs:
         with:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
+          include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
 
       - name: Resolve previous findings file
         id: previous-findings
         if: steps.previous.outputs.found == 'true'
+        env:
+          INCLUDE_DEV_DEPENDENCIES: ${{ inputs.include-dev-dependencies }}
         run: |
           set -euo pipefail
-          mapfile -t candidates < <(find .previous-mainline-artifact -type f -name '*.json' ! -name 'sbom.json' | sort)
+          mapfile -t candidates < <(find .previous-mainline-artifact -type f -name '*.json' ! -name 'sbom.json' ! -name 'scan-metadata.json' | sort)
           if (( ${#candidates[@]} == 0 )); then
             echo "Previous mainline artifact contained no JSON findings file." >&2
             exit 1
@@ -151,6 +163,24 @@ jobs:
             echo "Previous mainline artifact contained ${#candidates[@]} JSON files; using ${candidates[0]}." >&2
           fi
           echo "path=${candidates[0]}" >> "$GITHUB_OUTPUT"
+
+          # The previous artifact's scan-metadata.json records the
+          # include-dev-dependencies setting that produced it. A missing
+          # file predates this field, which only ever shipped with the
+          # false default - treat it as false rather than skip the check.
+          # A mismatch here means the diff below would report every
+          # devDependency finding as "new drift" when it's really just a
+          # scope change - fail loudly instead of alerting on it.
+          previous_metadata="$(find .previous-mainline-artifact -type f -name 'scan-metadata.json' | head -1)"
+          if [[ -n "$previous_metadata" ]]; then
+            previous_include_dev="$(jq -r '.includeDevDependencies' "$previous_metadata")"
+          else
+            previous_include_dev="false"
+          fi
+          if [[ "$previous_include_dev" != "$INCLUDE_DEV_DEPENDENCIES" ]]; then
+            echo "Previous mainline scan used include-dev-dependencies=${previous_include_dev}, but this run is configured with include-dev-dependencies=${INCLUDE_DEV_DEPENDENCIES}. Diffing across a scope change would misreport every newly-in-scope dependency as drift. Fix the mismatch (or delete the sca-mainline-${{ github.ref_name }} artifact to re-baseline) before re-running." >&2
+            exit 1
+          fi
 
       - name: Diff against previous scan
         id: diff
@@ -235,5 +265,6 @@ jobs:
             ${{ steps.scan.outputs.sbom-cyclonedx-json }}
             ${{ steps.scan.outputs.findings-json }}
             ${{ steps.scan.outputs.findings-report }}
+            ${{ steps.scan.outputs.scan-metadata }}
           retention-days: ${{ inputs.artifact-retention-days }}
           if-no-files-found: error
