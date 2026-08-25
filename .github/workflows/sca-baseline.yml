@@ -47,6 +47,12 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    # Single source of truth for the side directory "Checkout this action's
+    # source" below checks itself out into, so "Run scan"'s exclude-paths
+    # input (see action.yml) can never drift from the path that checkout
+    # step actually creates.
+    env:
+      ACTION_CHECKOUT_PATH: .sca-syft-grype
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -71,8 +77,14 @@ jobs:
         with:
           repository: ${{ steps.action-source.outputs.repo }}
           ref: ${{ steps.action-source.outputs.ref }}
-          path: .sca-syft-grype
+          path: ${{ env.ACTION_CHECKOUT_PATH }}
 
+      # project-base-dir defaults to "." (the repo root), same directory the
+      # checkout step above lands in - exclude it so it isn't catalogued as
+      # part of the project, and so the artifact this uploads (attached to
+      # releases, resolved as the baseline sca-pr.yml diffs PRs against)
+      # stays an accurate description of the product. See sca-pr.yml's
+      # equivalent comment / bug writeup for detail.
       - name: Run scan
         id: scan
         uses: ./.sca-syft-grype
@@ -80,6 +92,7 @@ jobs:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
           include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
+          exclude-paths: ${{ env.ACTION_CHECKOUT_PATH }}
 
       - name: Upload baseline findings artifact
         # Bundles the SBOM and machine-readable findings JSON (what

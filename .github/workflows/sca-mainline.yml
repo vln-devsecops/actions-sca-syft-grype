@@ -92,6 +92,12 @@ jobs:
       checks: write
       issues: write
       actions: read
+    # Single source of truth for the side directory "Checkout this action's
+    # source" below checks itself out into, so "Scan current HEAD"'s
+    # exclude-paths input (see action.yml) can never drift from the path
+    # that checkout step actually creates.
+    env:
+      ACTION_CHECKOUT_PATH: .sca-syft-grype
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -116,7 +122,7 @@ jobs:
         with:
           repository: ${{ steps.action-source.outputs.repo }}
           ref: ${{ steps.action-source.outputs.ref }}
-          path: .sca-syft-grype
+          path: ${{ env.ACTION_CHECKOUT_PATH }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -139,6 +145,10 @@ jobs:
             --repo "$REPO" --name "$ARTIFACT_NAME" --dest .previous-mainline-artifact)"
           echo "found=${found}" >> "$GITHUB_OUTPUT"
 
+      # project-base-dir defaults to "." (the repo root), same directory
+      # the "Checkout this action's source" step above lands in - exclude it
+      # so it isn't catalogued as part of the project. See
+      # sca-pr.yml's equivalent comment / bug writeup for detail.
       - name: Scan current HEAD
         id: scan
         uses: ./.sca-syft-grype
@@ -146,6 +156,7 @@ jobs:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
           include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
+          exclude-paths: ${{ env.ACTION_CHECKOUT_PATH }}
 
       - name: Resolve previous findings file
         id: previous-findings
