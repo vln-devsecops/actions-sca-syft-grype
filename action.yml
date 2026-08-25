@@ -37,6 +37,17 @@ inputs:
       makes every devDependency finding look "new".
     required: false
     default: "false"
+  exclude-paths:
+    description: >-
+      Newline-separated list of paths, relative to project-base-dir, to
+      exclude from the syft catalogue. For a calling workflow that checks
+      itself out (or a baseline commit) into a side directory alongside
+      project-base-dir - e.g. this action's own source, or a baseline
+      checkout used for diffing - to keep that side directory from being
+      catalogued as part of the project. Each non-blank line becomes a syft
+      `--exclude ./<path>/**` glob. Blank lines are ignored.
+    required: false
+    default: ""
 
 outputs:
   sbom-json:
@@ -116,6 +127,7 @@ runs:
         GRYPE_DB_CACHE_DIR: ${{ runner.temp }}/grype-db-cache
         SCAN_TIMEOUT_SECONDS: ${{ inputs.scan-timeout-seconds }}
         INCLUDE_DEV_DEPENDENCIES: ${{ inputs.include-dev-dependencies }}
+        EXCLUDE_PATHS: ${{ inputs.exclude-paths }}
       run: |
         set -euo pipefail
         "${{ github.action_path }}/scripts/run_scan.sh"

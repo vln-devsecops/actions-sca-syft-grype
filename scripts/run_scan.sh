@@ -18,6 +18,12 @@
 #                forwarded to syft's javascript cataloger as
 #                SYFT_JAVASCRIPT_INCLUDE_DEV_DEPENDENCIES. syft's own default
 #                is false (production dependencies only); see README.md.
+#                EXCLUDE_PATHS (default "") - newline-separated paths,
+#                relative to PROJECT_BASE_DIR, to exclude from the syft
+#                catalogue. Needed because a calling workflow may check
+#                itself (or a baseline commit) out into a side directory
+#                alongside PROJECT_BASE_DIR when that's the repo root - see
+#                action.yml's exclude-paths input.
 set -euo pipefail
 
 : "${PROJECT_BASE_DIR:?PROJECT_BASE_DIR is required}"
@@ -27,6 +33,17 @@ set -euo pipefail
 
 SCAN_TIMEOUT_SECONDS="${SCAN_TIMEOUT_SECONDS:-900}"
 INCLUDE_DEV_DEPENDENCIES="${INCLUDE_DEV_DEPENDENCIES:-false}"
+EXCLUDE_PATHS="${EXCLUDE_PATHS:-}"
+
+# syft requires excluded paths to start with "./", "*/", or "**/" - build
+# that glob from each plain relative path rather than push that syntax onto
+# every caller of this script (and of action.yml's exclude-paths input).
+SYFT_EXCLUDE_ARGS=()
+while IFS= read -r exclude_path; do
+  exclude_path="${exclude_path#./}"
+  [[ -z "$exclude_path" ]] && continue
+  SYFT_EXCLUDE_ARGS+=(--exclude "./${exclude_path}/**")
+done <<<"$EXCLUDE_PATHS"
 
 if [[ ! -d "$PROJECT_BASE_DIR" ]]; then
   echo "PROJECT_BASE_DIR '${PROJECT_BASE_DIR}' does not exist or is not a directory." >&2
@@ -97,7 +114,8 @@ timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \
   "${SYFT_IMAGE}" \
   dir:/src \
   -o syft-json=/out/sbom.json \
-  -o cyclonedx-json=/out/sbom.cdx.json
+  -o cyclonedx-json=/out/sbom.cdx.json \
+  ${SYFT_EXCLUDE_ARGS[@]+"${SYFT_EXCLUDE_ARGS[@]}"}
 
 if [[ ! -f "${ABS_OUT_DIR}/sbom.json" ]]; then
   echo "syft did not produce ${ABS_OUT_DIR}/sbom.json." >&2
@@ -108,6 +126,23 @@ if [[ ! -f "${ABS_OUT_DIR}/sbom.cdx.json" ]]; then
   echo "syft did not produce ${ABS_OUT_DIR}/sbom.cdx.json." >&2
   exit 1
 fi
+
+# Cheap regression guard: if an excluded path still shows up as a location
+# in the SBOM, the --exclude glob above silently stopped matching (e.g. a
+# caller passed a path with different casing/trailing slash, or syft's
+# --exclude semantics changed) - fail loudly here rather than let phantom
+# findings from a side directory reach a consumer's PR.
+for exclude_path in ${SYFT_EXCLUDE_ARGS[@]+"${SYFT_EXCLUDE_ARGS[@]}"}; do
+  [[ "$exclude_path" == "--exclude" ]] && continue
+  name="${exclude_path#./}"
+  name="${name%/**}"
+  if ! jq -e --arg pattern "(^|/)${name}/" \
+    '[.artifacts[]?.locations[]?.path // empty | select(test($pattern))] | length == 0' \
+    "${ABS_OUT_DIR}/sbom.json" >/dev/null; then
+    echo "SBOM contains a location under excluded path '${name}/' - the syft --exclude glob did not match. Refusing to publish a scan that catalogues this action's own working directories." >&2
+    exit 1
+  fi
+done
 
 echo "Scanning SBOM for vulnerabilities..."
 timeout "${SCAN_TIMEOUT_SECONDS}" docker run --rm \

@@ -193,7 +193,45 @@ exercise that path deliberately.
 4. Confirm `sca-mainline-<branch>` re-uploads on every run (`if: always()`),
    including when the blocking-policy step fails the job.
 
-## 9. Deleting a baseline or mainline artifact
+## 9. Scan excludes its own checkout (`run_scan.sh`, `exclude-paths`)
+
+`sca-pr.yml`, `sca-mainline.yml`, and `sca-baseline.yml` all check this
+action's own source out into `.sca-syft-grype/` alongside the project being
+scanned, and `sca-pr.yml`'s fallback tier additionally checks the target
+branch out into `.baseline-checkout/` - both siblings of `project-base-dir`
+when it's `.` (the default, and what a consumer scanning its whole repo
+uses). Neither is part of the project being scanned, so a scan with
+`project-base-dir: .` must not catalogue either one.
+
+1. Run the full pipeline locally against `project-base-dir=.` (not
+   `fixtures`, which is what `ci.yml` uses and why this regression shipped
+   unnoticed - see bug writeup) with a decoy directory standing in for a
+   sibling checkout:
+   ```sh
+   mkdir -p /tmp/exclude-test && cp -r . /tmp/exclude-test/project
+   cp -r fixtures /tmp/exclude-test/project/.sca-syft-grype-decoy
+   mkdir -p /tmp/sca-out
+   COMPOSE_FILE=docker-compose.tools.yml PROJECT_KEY=test-exclude \
+     PROJECT_BASE_DIR=/tmp/exclude-test/project OUT_DIR=/tmp/sca-out/exclude \
+     EXCLUDE_PATHS=".sca-syft-grype-decoy" \
+     ./scripts/run_scan.sh
+   ```
+2. Confirm `/tmp/sca-out/exclude/sbom.json`'s artifacts contain no location
+   under `.sca-syft-grype-decoy/` (`jq '[.artifacts[].locations[]?.path |
+   select(test("(^|/)\\.sca-syft-grype-decoy/"))]' /tmp/sca-out/exclude/sbom.json`
+   should print `[]`), and that `grype-raw.json` has none of the fixtures'
+   known CVEs (the decoy holds the same vulnerable pins as fixtures/, which
+   section 2 above already confirms surface when *not* excluded).
+3. Re-run without `EXCLUDE_PATHS` set and confirm the decoy's findings *do*
+   appear - this is what proves the exclusion is doing something, not just
+   that the assertion added to `run_scan.sh` never fires.
+4. Open a real PR against this repo with `project-base-dir` left at its
+   default in a scratch caller workflow (or temporarily flip `ci.yml`'s
+   `pr-scan` job to `project-base-dir: .`) and confirm the findings report
+   contains zero findings located under `.sca-syft-grype/` or
+   `.baseline-checkout/`.
+
+## 10. Deleting a baseline or mainline artifact
 
 Needed for section 5 (tier b, fallback) and for general cleanup after
 testing. Either:
@@ -211,7 +249,7 @@ testing. Either:
   `GET /repos/<owner>/<repo>/actions/artifacts?name=sca-baseline-<sha>` (or
   `name=sca-mainline-<branch>`).
 
-## 10. Cleanup after manual testing
+## 11. Cleanup after manual testing
 
 - Close/delete scratch branches and PRs created for this procedure.
 - Delete any `sca-baseline-*`/`sca-mainline-*` artifacts created purely for

@@ -56,6 +56,13 @@ jobs:
       checks: write
       pull-requests: write
       actions: read
+    # Single source of truth for the side-directory names the steps below
+    # check things out into, so the "Scan PR head" step's exclude-paths
+    # input (see action.yml) can never drift from the paths the checkout
+    # steps actually create - see bug writeup for what happens when it does.
+    env:
+      ACTION_CHECKOUT_PATH: .sca-syft-grype
+      BASELINE_CHECKOUT_PATH: .baseline-checkout
     steps:
       - name: Checkout PR head
         uses: actions/checkout@v7
@@ -116,7 +123,7 @@ jobs:
         with:
           repository: ${{ steps.action-source.outputs.repo }}
           ref: ${{ steps.action-source.outputs.ref }}
-          path: .sca-syft-grype
+          path: ${{ env.ACTION_CHECKOUT_PATH }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -173,7 +180,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.base.sha }}
-          path: .baseline-checkout
+          path: ${{ env.BASELINE_CHECKOUT_PATH }}
 
       # project-base-dir might not exist yet on the target branch at all -
       # e.g. this PR is the one introducing it. That's not a
@@ -185,7 +192,7 @@ jobs:
         env:
           PROJECT_BASE_DIR: ${{ inputs.project-base-dir }}
         run: |
-          if [[ -d ".baseline-checkout/${PROJECT_BASE_DIR}" ]]; then
+          if [[ -d "${BASELINE_CHECKOUT_PATH}/${PROJECT_BASE_DIR}" ]]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -197,7 +204,7 @@ jobs:
         uses: ./.sca-syft-grype
         with:
           project-key: ${{ inputs.project-key }}-fallback-base
-          project-base-dir: .baseline-checkout/${{ inputs.project-base-dir }}
+          project-base-dir: ${{ env.BASELINE_CHECKOUT_PATH }}/${{ inputs.project-base-dir }}
           include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
 
       # This scan's SBOM would otherwise be generated and discarded - only
@@ -223,6 +230,12 @@ jobs:
           echo '[]' > empty-baseline-findings.json
           echo "findings-json=empty-baseline-findings.json" >> "$GITHUB_OUTPUT"
 
+      # project-base-dir defaults to "." (the repo root), which is also
+      # where the two checkout steps above land - without excluding them,
+      # this scan catalogues this action's own fixtures (and, on the
+      # fallback path, a full copy of the target branch) as if they were
+      # part of the project being scanned. See bug writeup for what that
+      # looks like in a findings report.
       - name: Scan PR head
         id: head-scan
         uses: ./.sca-syft-grype
@@ -230,6 +243,9 @@ jobs:
           project-key: ${{ inputs.project-key }}
           project-base-dir: ${{ inputs.project-base-dir }}
           include-dev-dependencies: ${{ inputs.include-dev-dependencies }}
+          exclude-paths: |
+            ${{ env.ACTION_CHECKOUT_PATH }}
+            ${{ env.BASELINE_CHECKOUT_PATH }}
 
       # The full current finding set (not just this PR's new findings, which
       # the Check Run annotations already cover inline-on-diff) - this is
