@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/vln-devsecops/actions-sca-syft-grype/compare/v1.0.1...v1.1.0) (2026-08-25)
+
+
+### Features
+
+* add include-dev-dependencies input, document scan scope ([#14](https://github.com/vln-devsecops/actions-sca-syft-grype/issues/14)) ([478f9a6](https://github.com/vln-devsecops/actions-sca-syft-grype/commit/478f9a6f1b040110e0dd26a4576ee1026cfb8c47))
+
+
+### Bug Fixes
+
+* exclude this action's own checkout from the syft catalogue ([#16](https://github.com/vln-devsecops/actions-sca-syft-grype/issues/16)) ([c8545f0](https://github.com/vln-devsecops/actions-sca-syft-grype/commit/c8545f0444ffd6973a2080923f06f8bc381cce32))
+
 ## [1.0.1](https://github.com/vln-devsecops/actions-sca-syft-grype/compare/v1.0.0...v1.0.1) (2026-08-24)
 
 
