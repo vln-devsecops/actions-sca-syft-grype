@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+import yaml
 
 from filter_suppressed import FilterResult, build_summary, filter_suppressed, parse_scaignore
 
@@ -88,29 +89,22 @@ class TestParseScaignore:
     def test_missing_required_field_raises(self, missing):
         entry = make_entry()
         del entry[missing]
-        text = {"suppressions": [entry]}
-        import yaml
+        text = yaml.dump({"suppressions": [entry]})
 
         with pytest.raises(ValueError, match=missing):
-            parse_scaignore(yaml.dump(text))
+            parse_scaignore(text)
 
     def test_unrecognized_entry_key_raises(self):
-        import yaml
-
         text = yaml.dump({"suppressions": [{**make_entry(), "typo_field": "x"}]})
         with pytest.raises(ValueError, match="unrecognized key"):
             parse_scaignore(text)
 
     def test_malformed_expires_date_raises(self):
-        import yaml
-
         text = yaml.dump({"suppressions": [make_entry(expires="not-a-date")]})
         with pytest.raises(ValueError, match="expires"):
             parse_scaignore(text)
 
     def test_empty_id_raises(self):
-        import yaml
-
         text = yaml.dump({"suppressions": [make_entry(vuln_id="")]})
         with pytest.raises(ValueError, match="id"):
             parse_scaignore(text)

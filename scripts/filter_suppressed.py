@@ -145,21 +145,30 @@ class FilterResult:
         self.expired = expired
 
 
+def _resolve_match(finding, suppressions, today):
+    """The one matching suppression that decides a finding's fate, plus the
+    first expired one seen along the way (for the case where only an
+    expired entry matches - see filter_suppressed()). An active match wins
+    outright and stops the search; an expired match is remembered but
+    doesn't stop it, since a later entry might still actively suppress the
+    same finding."""
+    active_match = None
+    expired_match = None
+    for entry in suppressions:
+        if not _matches(entry, finding):
+            continue
+        if not _is_expired(entry, today):
+            return entry, expired_match
+        expired_match = expired_match or entry
+    return active_match, expired_match
+
+
 def filter_suppressed(findings, suppressions, today):
     kept = []
     suppressed = []
     expired = []
     for finding in findings:
-        active_match = None
-        expired_match = None
-        for entry in suppressions:
-            if not _matches(entry, finding):
-                continue
-            if _is_expired(entry, today):
-                expired_match = expired_match or entry
-            else:
-                active_match = entry
-                break  # an active match wins outright; no need to keep looking
+        active_match, expired_match = _resolve_match(finding, suppressions, today)
         if active_match is not None:
             suppressed.append({"finding": finding, "suppression": active_match})
         else:
