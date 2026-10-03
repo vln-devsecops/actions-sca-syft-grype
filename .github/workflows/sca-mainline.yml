@@ -82,6 +82,15 @@ on:
           mismatch, rather than let a scope change look like drift.
         type: boolean
         default: false
+      suppressions-path:
+        description: >-
+          Path, relative to project-base-dir, to an optional .scaignore
+          file of time-boxed vulnerability suppressions - see
+          scripts/filter_suppressed.py and the README. Skipped entirely
+          (every new finding evaluated as before) if the file doesn't
+          exist.
+        type: string
+        default: .scaignore
 
 jobs:
   mainline-scan:
@@ -128,6 +137,9 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r .sca-syft-grype/requirements.txt
 
       # Not SHA-keyed, unlike sca-baseline.yml's artifact - there's no new
       # commit to key it by, since this scan reruns against the same code on
@@ -208,6 +220,22 @@ jobs:
             --out new-findings.json
           echo "new-findings=new-findings.json" >> "$GITHUB_OUTPUT"
 
+      - name: Filter suppressed findings
+        id: suppressed
+        if: steps.previous.outputs.found == 'true'
+        env:
+          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          SUPPRESSIONS_FILE: ${{ inputs.project-base-dir }}/${{ inputs.suppressions-path }}
+        run: |
+          {
+            echo "### SCA syft/grype mainline suppressions"
+            python3 .sca-syft-grype/scripts/filter_suppressed.py \
+              --findings "$NEW_FINDINGS" \
+              --config "$SUPPRESSIONS_FILE" \
+              --out filtered-findings.json
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "filtered-findings=filtered-findings.json" >> "$GITHUB_OUTPUT"
+
       - name: No prior scan - establishing baseline only
         if: steps.previous.outputs.found != 'true'
         run: |
@@ -222,7 +250,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          NEW_FINDINGS: ${{ steps.suppressed.outputs.filtered-findings }}
           SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
           BLOCKING: ${{ inputs.blocking }}
           CHECK_NAME: ${{ inputs.check-name }}
@@ -261,7 +289,7 @@ jobs:
         run: |
           python3 .sca-syft-grype/scripts/report_mainline_findings.py \
             --repo "$REPO" \
-            --new-findings "${{ steps.diff.outputs.new-findings }}" \
+            --new-findings "${{ steps.suppressed.outputs.filtered-findings }}" \
             --project-key "${{ inputs.project-key }}" \
             --labels "${{ inputs.issue-labels }}" \
             --run-url "$RUN_URL"
