@@ -59,8 +59,8 @@ def parse_scaignore(text):
     "today" actually matters.
 
     Empty/blank text, or a `suppressions:` key holding an empty list, is a
-    valid empty config - same "file absent or empty reproduces today's
-    behavior exactly" guarantee .sastrc makes. Anything that doesn't match
+    valid empty config - same "file absent or empty means nothing is
+    suppressed" guarantee .sastrc makes. Anything that doesn't match
     the schema - an unknown key, a missing required field, a malformed date
     - raises ValueError naming the offending field, rather than silently
     dropping or guessing at the entry.

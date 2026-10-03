@@ -188,8 +188,8 @@ actually exercises, say. Drop an optional `.scaignore` (YAML) file into
 forwarded by both `sca-pr.yml` and `sca-mainline.yml`) to stop a specific,
 reviewed finding from blocking or alerting, without raising
 `severity-threshold` or turning `blocking` off for everything else. The
-file not existing reproduces today's exact behavior - every finding
-evaluated as before.
+file not existing means nothing is suppressed - every finding is evaluated
+normally.
 
 ```yaml
 # .scaignore
