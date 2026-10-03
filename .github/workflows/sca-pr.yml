@@ -46,6 +46,15 @@ on:
           findings.
         type: boolean
         default: false
+      suppressions-path:
+        description: >-
+          Path, relative to project-base-dir, to an optional .scaignore
+          file of time-boxed vulnerability suppressions - see
+          scripts/filter_suppressed.py and the README. Skipped entirely
+          (every new finding evaluated as before) if the file doesn't
+          exist.
+        type: string
+        default: .scaignore
 
 jobs:
   pr-scan:
@@ -129,6 +138,9 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r .sca-syft-grype/requirements.txt
 
       - name: "Look up baseline artifact (tier a: PR branch-off point)"
         id: tier-a
@@ -352,13 +364,28 @@ jobs:
           echo "new-findings=new-findings.json" >> "$GITHUB_OUTPUT"
           echo "removed-findings=removed-findings.json" >> "$GITHUB_OUTPUT"
 
+      - name: Filter suppressed findings
+        id: suppressed
+        env:
+          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          SUPPRESSIONS_FILE: ${{ inputs.project-base-dir }}/${{ inputs.suppressions-path }}
+        run: |
+          {
+            echo "### SCA syft/grype suppressions"
+            python3 .sca-syft-grype/scripts/filter_suppressed.py \
+              --findings "$NEW_FINDINGS" \
+              --config "$SUPPRESSIONS_FILE" \
+              --out filtered-findings.json
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "filtered-findings=filtered-findings.json" >> "$GITHUB_OUTPUT"
+
       - name: Apply blocking policy
         id: policy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          NEW_FINDINGS: ${{ steps.diff.outputs.new-findings }}
+          NEW_FINDINGS: ${{ steps.suppressed.outputs.filtered-findings }}
           SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
           BLOCKING: ${{ inputs.blocking }}
           CHECK_NAME: ${{ inputs.check-name }}

@@ -179,6 +179,57 @@ fails closed to `High` for threshold comparisons specifically - an unscored
 vulnerability must never silently pass a gate by comparing as the lowest
 possible risk. See `docs/design.md`.
 
+### Suppressing a finding: `.scaignore`
+
+A new finding is occasionally a known quantity rather than something to
+fix or wait out - a CVE in code a dependency vendors internally but never
+actually exercises, say. Drop an optional `.scaignore` (YAML) file into
+`project-base-dir` (path configurable via the `suppressions-path` input,
+forwarded by both `sca-pr.yml` and `sca-mainline.yml`) to stop a specific,
+reviewed finding from blocking or alerting, without raising
+`severity-threshold` or turning `blocking` off for everything else. The
+file not existing means nothing is suppressed - every finding is evaluated
+normally.
+
+```yaml
+# .scaignore
+suppressions:
+  - id: GHSA-xxxx-xxxx-xxxx          # or CVE-YYYY-NNNNN
+    package: cytoscape               # optional - omit to match this id for any package
+    reason: >-
+      Grype fingerprints a small vendored subset of lodash's internals
+      bundled into cytoscape's own dist build as a full lodash install.
+      Neither _.template nor _.unset/_.omit (the vulnerable functions)
+      appear in the vendored code - confirmed by grepping cytoscape's
+      dist/*.js for both.
+    expires: "2027-01-01"            # required - re-evaluated after this date
+```
+
+Every field but `package` is required: `id` (what to suppress), `reason`
+(for the next person reading it, not just the one who wrote it), and
+`expires` (`YYYY-MM-DD`). There is deliberately no way to suppress
+"everything" or "every finding for a package" - a suppression always names
+one specific vulnerability. There's also deliberately no way to suppress a
+finding forever: once `expires` passes, the suppression stops applying and
+the finding blocks/alerts again until the entry is renewed (a fresh look,
+not a rubber stamp) or removed. An expired entry that would otherwise have
+matched something is called out explicitly in the job summary - "a
+suppression went stale" is exactly the kind of thing that's easy to miss by
+just not seeing a red X anymore.
+
+A malformed `.scaignore` - an unrecognized key, a missing required field, a
+non-`YYYY-MM-DD` `expires` - fails the job outright rather than silently
+suppressing nothing (or, worse, being misread as suppressing everything).
+See `scripts/filter_suppressed.py`.
+
+Suppression is applied after the baseline diff and before the blocking
+policy, so a suppressed finding never fails the job, is excluded from the
+Check Run annotations and `sca-mainline.yml`'s tracking-issue reporting,
+and is never silently invisible either - the suppressed (and any expired)
+list is always printed to the job summary, separate from the policy
+section, so "why didn't this block" stays answerable without reading
+`.scaignore` directly.
+
 ### Recurring mainline scan
 
 `sca-mainline.yml` exists because grype's vulnerability database is a
