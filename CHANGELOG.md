@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/vln-devsecops/actions-sca-syft-grype/compare/v1.1.0...v1.2.0) (2026-10-03)
+
+
+### Features
+
+* add .scaignore suppression file for known, reviewed findings ([#17](https://github.com/vln-devsecops/actions-sca-syft-grype/issues/17)) ([80f0a34](https://github.com/vln-devsecops/actions-sca-syft-grype/commit/80f0a346f654f5ed22b37b664535545d2dd9ad56))
+
 ## [1.1.0](https://github.com/vln-devsecops/actions-sca-syft-grype/compare/v1.0.1...v1.1.0) (2026-08-25)
 
 
